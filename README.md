@@ -40,4 +40,5 @@ and Croupier would then post an image with a filename containing `matt_` to the 
 `groupme_image_url` and `groupme_post_url`: urls used to communicate with GroupMe's bot API.  
 `not_found_link`: a link to an image that will be posted when Croupier cannot find an image matching a user's query.
 
-The remaining variables are credentials needed to interact with the [GroupMe](https://dev.groupme.com/bots) and [Dropbox](https://www.dropbox.com/developers) APIs.
+The remaining variables are credentials needed to interact with the [GroupMe](https://dev.groupme.com/bots) and [Dropbox](https://www.dropbox.com/developers) APIs.  
+You will need to replace these with your own credentials.

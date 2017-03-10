@@ -34,8 +34,8 @@ def new_message():
 
 
 if __name__ == '__main__':
-    if not constants:
-        print("constants.py not found")
+    if not constants or constants.dropbox_key == 'xxxxx-xxxxxxxxxxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx':
+        print("constants.py not configured")
         print("See README for instructions")
     else:
         port = int(os.environ.get("PORT", 5000))
