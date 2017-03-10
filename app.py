@@ -17,8 +17,8 @@ def new_message():
     spin.test = test
     json = request.get_json()
     message_text = json['text'].lower()
-    if not message_text or 'post' != message_text.split()[0]:
-        return "post keyword not in message"
+    if not message_text or constants.keyword != message_text.split()[0]:
+        return constants.keyword + " keyword not in message"
     search = ' '.join(message_text.split()[1:])
     already_replaced = []
     for name, replacement in constants.names.items():
@@ -34,5 +34,9 @@ def new_message():
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    if not constants:
+        print("constants.py not found")
+        print("See README for instructions")
+    else:
+        port = int(os.environ.get("PORT", 5000))
+        app.run(host='0.0.0.0', port=port)
