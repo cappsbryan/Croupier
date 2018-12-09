@@ -2,18 +2,14 @@
 
 import datetime
 import math
-import os
 import random
-import urllib.parse
 
 import dropbox
-import psycopg2
 import requests
 
-import constants
+import settings
 
 dateformat = '%Y-%m-%d %H:%M:%S.%f'
-test = False
 
 
 def current_time():
@@ -21,7 +17,7 @@ def current_time():
 
 
 def get_picture_path(dbx, search=None):
-    folder = dbx.files_list_folder(constants.dropbox_path)
+    folder = dbx.files_list_folder(settings.dropbox_path)
     items = folder.entries
     if search and search != 'anybody' and search != 'any' and search != '':
         search = search.lower()
@@ -35,7 +31,7 @@ def get_picture_path(dbx, search=None):
 
 
 def get_temp_dropbox_image_link(search=None):
-    dbx = dropbox.Dropbox(constants.dropbox_key)
+    dbx = dropbox.Dropbox(settings.dropbox_key)
     path = get_picture_path(dbx, search)
     if not path:
         return None
@@ -58,17 +54,17 @@ def filter_by_all_words(items, words):
 
 def upload_to_groupme_image_service(link):
     image = requests.get(link)
-    headers = {'X-Access-Token': constants.groupme_token}
-    response = requests.post(constants.groupme_image_url, data=image, headers=headers)
+    headers = {'X-Access-Token': settings.groupme_token}
+    response = requests.post(settings.groupme_image_url, data=image, headers=headers)
     json = response.json()
     url = json['payload']['url']
     return url
 
 
 def post_image_to_groupme(link):
-    body = {"bot_id": constants.groupme_bot_id, "attachments": [{"type": "image", "url": link}]}
-    if not test:
-        requests.post(constants.groupme_post_url, json=body)
+    body = {"bot_id": settings.groupme_bot_id, "attachments": [{"type": "image", "url": link}]}
+    if not settings.test:
+        requests.post(settings.groupme_post_url, json=body)
     return body
 
 
@@ -77,7 +73,7 @@ def post_random_dropbox_picture_to_groupme():
 
 
 def post_not_found_image():
-    link = constants.not_found_link
+    link = settings.not_found_link
     groupme_link = upload_to_groupme_image_service(link)
     return post_image_to_groupme(groupme_link)
 
@@ -94,7 +90,7 @@ def post_picture(search=None):
 
 def weighted_list_of_files(unweighted):
     weighted = []
-    conn = connect_to_db()
+    conn = settings.connect_to_db()
     c = conn.cursor()
     for item in unweighted:
         path = item.path_lower
@@ -111,7 +107,7 @@ def weighted_list_of_files(unweighted):
 
 
 def write_to_db(file_path):
-    conn = connect_to_db()
+    conn = settings.connect_to_db()
     c = conn.cursor()
     date = current_time().strftime(dateformat)
     try:
@@ -125,19 +121,6 @@ def write_to_db(file_path):
         c.close()
         conn.commit()
         conn.close()
-
-
-def connect_to_db():
-    urllib.parse.uses_netloc.append("postgres")
-    url = urllib.parse.urlparse(os.environ["DATABASE_URL"])
-    conn = psycopg2.connect(
-        database=url.path[1:],
-        user=url.username,
-        password=url.password,
-        host=url.hostname,
-        port=url.port
-    )
-    return conn
 
 
 if __name__ == '__main__':
