@@ -1,4 +1,6 @@
-requests==2.10.0
-dropbox==7.1.1
-Flask==0.11.1
-psycopg2==2.6.2
+requests==2.20.1
+dropbox==9.2.0
+Flask==1.0.2
+psycopg2==2.7.6
+google-api-python-client==1.7.6
+python-dotenv==0.10.0
