@@ -8,6 +8,7 @@ import dropbox
 import requests
 
 import settings
+from gdrive import drive_service
 
 dateformat = '%Y-%m-%d %H:%M:%S.%f'
 
@@ -16,27 +17,61 @@ def current_time():
     return datetime.datetime.now()
 
 
-def get_picture_path(dbx, search=None):
-    folder = dbx.files_list_folder(settings.dropbox_path)
-    items = folder.entries
+def pick_random_picture(items, search=None):
     if search and search != 'anybody' and search != 'any' and search != '':
         search = search.lower()
         words = search.split()
         items = filter_by_all_words(items, words)
     items = weighted_list_of_files(items)
     if items:
-        path = random.choice(items).path_lower
-        write_to_db(path)
-        return path
+        item = random.choice(items)
+        write_to_db(item)
+        return item
 
 
 def get_temp_dropbox_image_link(search=None):
     dbx = dropbox.Dropbox(settings.dropbox_key)
-    path = get_picture_path(dbx, search)
-    if not path:
+    folder = dbx.files_list_folder(settings.folder_path)
+    items = [entry.name for entry in folder.entries]
+    item = pick_random_picture(items, search)
+    if not item:
         return None
-    temp_link = dbx.files_get_temporary_link(path)
-    return temp_link
+    temp_link = dbx.files_get_temporary_link(settings.folder_path + '/' + item)
+    return temp_link.link
+
+
+def get_gdrive_image(search=None):
+    items = get_gdrive_files()
+    name = pick_random_picture(items, search)
+    if not name:
+        return None
+    response = drive_service.files().list(q=f"name contains '{name}'").execute()
+    id = response['files'][0]['id']
+    response = drive_service.files().get_media(fileId=id).execute()
+    return response
+
+
+def get_gdrive_folder_id():
+    folder = settings.folder_path.split('/')[-1]
+    query = f'name = \'{folder}\' and mimeType = \'application/vnd.google-apps.folder\''
+    response = drive_service.files().list(q=query).execute()
+    return response['files'][0]['id']
+
+
+def get_gdrive_files():
+    folder_id = get_gdrive_folder_id()
+    page_token = None
+    files = []
+    while True:
+        response = drive_service.files().list(q=f"'{folder_id}' in parents",
+                                              pageToken=page_token).execute()
+        for file in response.get('files', []):
+            if file['mimeType'] == 'image/png':
+                files.append(file['name'])
+        page_token = response.get('nextPageToken', None)
+        if page_token is None:
+            break
+    return files
 
 
 def filter_by_all_words(items, words):
@@ -44,7 +79,7 @@ def filter_by_all_words(items, words):
     for item in items:
         include = True
         for keyword in words:
-            if keyword not in item.name.lower():
+            if keyword not in item.lower():
                 include = False
                 break
         if include:
@@ -52,10 +87,14 @@ def filter_by_all_words(items, words):
     return new_items
 
 
-def upload_to_groupme_image_service(link):
+def upload_link_to_groupme_image_service(link):
     image = requests.get(link)
+    return upload_data_to_groupme_image_service(image.content)
+
+
+def upload_data_to_groupme_image_service(data):
     headers = {'X-Access-Token': settings.groupme_token}
-    response = requests.post(settings.groupme_image_url, data=image, headers=headers)
+    response = requests.post(settings.groupme_image_url, data=data, headers=headers)
     json = response.json()
     url = json['payload']['url']
     return url
@@ -74,17 +113,18 @@ def post_random_dropbox_picture_to_groupme():
 
 def post_not_found_image():
     link = settings.not_found_link
-    groupme_link = upload_to_groupme_image_service(link)
+    groupme_link = upload_link_to_groupme_image_service(link)
     return post_image_to_groupme(groupme_link)
 
 
 def post_picture(search=None):
-    dropbox_link = get_temp_dropbox_image_link(search)
-    if dropbox_link:
-        dropbox_link = dropbox_link.link
-    else:
-        return
-    groupme_link = upload_to_groupme_image_service(dropbox_link)
+    groupme_link = None
+    if settings.storage_service == settings.StorageService.DROPBOX:
+        link = get_temp_dropbox_image_link(search)
+        groupme_link = upload_link_to_groupme_image_service(link)
+    elif settings.storage_service == settings.StorageService.GDRIVE:
+        image_data = get_gdrive_image(search)
+        groupme_link = upload_data_to_groupme_image_service(image_data)
     return post_image_to_groupme(groupme_link)
 
 
@@ -93,8 +133,7 @@ def weighted_list_of_files(unweighted):
     conn = settings.connect_to_db()
     c = conn.cursor()
     for item in unweighted:
-        path = item.path_lower
-        c.execute('SELECT * FROM posts WHERE path=%s', (path,))
+        c.execute('SELECT * FROM posts WHERE path=%s', (item,))
         result = c.fetchone()
         if result:
             last_posted_date = datetime.datetime.strptime(result[0], dateformat)

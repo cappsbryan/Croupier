@@ -1,10 +1,15 @@
 import os
-import psycopg2
 import urllib.parse
+from enum import Enum
 
+import psycopg2
 from dotenv import load_dotenv
 
+import gdrive
+
 load_dotenv()
+
+gdrive.init_drive_service()
 
 
 def get_env_variable(name, default=None):
@@ -19,14 +24,23 @@ def get_env_variable(name, default=None):
 keyword = get_env_variable('CROUPIER_KEYWORD', 'post')
 test = get_env_variable('CROUPIER_TEST_MODE', 'true').lower() != 'false'
 
+
+class StorageService(Enum):
+    DROPBOX = 1
+    GDRIVE = 2
+
+
 storage_service = get_env_variable('CROUPIER_STORAGE_SERVICE')
 if storage_service.lower() == 'dropbox':
+    storage_service = StorageService.DROPBOX
     dropbox_key = get_env_variable('CROUPIER_DROPBOX_KEY')
-    dropbox_path = get_env_variable('CROUPIER_DROPBOX_PATH')
 elif storage_service.lower() in ['gdrive', 'googledrive', 'google']:
+    storage_service = StorageService.GDRIVE
     pass
 else:
     raise EnvironmentError('Unknown CROUPIER_STORAGE_SERVICE value')
+
+folder_path = get_env_variable('CROUPIER_FOLDER_PATH')
 
 groupme_token = get_env_variable('CROUPIER_GROUPME_TOKEN')
 groupme_image_url = get_env_variable('CROUPIER_GROUPME_IMAGE_URL')
