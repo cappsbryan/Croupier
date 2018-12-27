@@ -124,7 +124,10 @@ def post_picture(search=None):
         groupme_link = upload_link_to_groupme_image_service(link)
     elif settings.storage_service == settings.StorageService.GDRIVE:
         image_data = get_gdrive_image(search)
-        groupme_link = upload_data_to_groupme_image_service(image_data)
+        if image_data:
+            groupme_link = upload_data_to_groupme_image_service(image_data)
+        else:
+            groupme_link = upload_link_to_groupme_image_service(settings.not_found_link)
     return post_image_to_groupme(groupme_link)
 
 
