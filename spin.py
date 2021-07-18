@@ -3,6 +3,7 @@
 import datetime
 import math
 import random
+import time
 
 import dropbox
 import requests
@@ -64,6 +65,7 @@ def get_gdrive_files():
     files = []
     while True:
         response = drive_service.files().list(q=f"'{folder_id}' in parents",
+                                              pageSize=1000,
                                               pageToken=page_token).execute()
         for file in response.get('files', []):
             if file['mimeType'].startswith('image'):
@@ -108,7 +110,7 @@ def post_image_to_groupme(link):
     return body
 
 
-def post_random_dropbox_picture_to_groupme():
+def post_random_picture_to_groupme():
     post_picture()
 
 
@@ -168,4 +170,7 @@ def write_to_db(file_path):
 
 
 if __name__ == '__main__':
-    post_random_dropbox_picture_to_groupme()
+    start = time.perf_counter()
+    post_random_picture_to_groupme()
+    end = time.perf_counter()
+    print('time to spin:', end - start)
