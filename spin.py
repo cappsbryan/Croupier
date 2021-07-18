@@ -66,7 +66,7 @@ def get_gdrive_files():
         response = drive_service.files().list(q=f"'{folder_id}' in parents",
                                               pageToken=page_token).execute()
         for file in response.get('files', []):
-            if file['mimeType'] == 'image/png':
+            if file['mimeType'].startswith('image'):
                 files.append(file['name'])
         page_token = response.get('nextPageToken', None)
         if page_token is None:
@@ -101,6 +101,7 @@ def upload_data_to_groupme_image_service(data):
 
 
 def post_image_to_groupme(link):
+    print('Posting image:', link)
     body = {"bot_id": settings.groupme_bot_id, "attachments": [{"type": "image", "url": link}]}
     if not settings.test:
         requests.post(settings.groupme_post_url, json=body)
@@ -135,16 +136,17 @@ def weighted_list_of_files(unweighted):
     weighted = []
     conn = settings.connect_to_db()
     c = conn.cursor()
+    c.execute('SELECT path, datetime FROM posts')
+    results = dict(c.fetchall())
     for item in unweighted:
-        c.execute('SELECT * FROM posts WHERE path=%s', (item,))
-        result = c.fetchone()
+        result = results.get(item)
         if result:
-            last_posted_date = datetime.datetime.strptime(result[0], dateformat)
+            last_posted_date = datetime.datetime.strptime(result, dateformat)
             delta = current_time() - last_posted_date
             days = delta.days if delta.days < 60 else 60
             weighted.extend([item] * math.ceil((days ** 2) / 35))
         else:
-            weighted.extend([item] * 103)
+            weighted.extend([item] * 300)
     return weighted
 
 
