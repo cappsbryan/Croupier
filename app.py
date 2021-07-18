@@ -15,10 +15,10 @@ app = Flask(__name__)
 def new_message():
     json = request.get_json()
     message_text = json['text'].lower()
-    first_word = message_text.split()[0]
-    if not message_text or first_word != settings.keyword:
+    words = message_text.split()
+    if not message_text or words[0] != settings.keyword:
         return settings.keyword + " keyword not in message"
-    search = ' '.join(message_text.split()[1:])
+    search = ' '.join(words[1:])
     already_replaced = []
     for name, replacement in settings.names.items():
         if name in search and replacement not in already_replaced:
