@@ -102,9 +102,13 @@ def upload_data_to_groupme_image_service(data):
     return url
 
 
-def post_image_to_groupme(link):
+def post_image_to_groupme(link, text):
     print('Posting image:', link)
-    body = {"bot_id": settings.groupme_bot_id, "attachments": [{"type": "image", "url": link}]}
+    body = {
+        "bot_id": settings.groupme_bot_id,
+        "text": text,
+        "attachments": [{"type": "image", "url": link}]
+    }
     if not settings.test:
         requests.post(settings.groupme_post_url, json=body)
     return body
@@ -117,7 +121,7 @@ def post_random_picture_to_groupme():
 def post_not_found_image():
     link = settings.not_found_link
     groupme_link = upload_link_to_groupme_image_service(link)
-    return post_image_to_groupme(groupme_link)
+    return post_image_to_groupme(groupme_link, "Lo siento 😱")
 
 
 def post_picture(search=None):
@@ -131,7 +135,7 @@ def post_picture(search=None):
             groupme_link = upload_data_to_groupme_image_service(image_data)
         else:
             groupme_link = upload_link_to_groupme_image_service(settings.not_found_link)
-    return post_image_to_groupme(groupme_link)
+    return post_image_to_groupme(groupme_link, search or "Here's a picture")
 
 
 def weighted_list_of_files(unweighted):
