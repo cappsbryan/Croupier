@@ -10,6 +10,7 @@ import requests
 
 import settings
 from gdrive import drive_service
+from emojis import emojis
 
 dateformat = '%Y-%m-%d %H:%M:%S.%f'
 
@@ -135,7 +136,8 @@ def post_picture(search=None):
             groupme_link = upload_data_to_groupme_image_service(image_data)
         else:
             groupme_link = upload_link_to_groupme_image_service(settings.not_found_link)
-    return post_image_to_groupme(groupme_link, search or "Here's a picture")
+    message = "Here's your picture " if search is not None else "Here's a picture "
+    return post_image_to_groupme(groupme_link, "Here's a picture " + random.choice(emojis))
 
 
 def weighted_list_of_files(unweighted):
