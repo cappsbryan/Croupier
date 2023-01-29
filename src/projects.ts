@@ -1,4 +1,7 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import {
+  APIGatewayProxyEventV2WithJWTAuthorizer,
+  APIGatewayProxyResultV2,
+} from "aws-lambda";
 import { DynamoDB } from "aws-sdk";
 import {
   badRequest,
@@ -10,12 +13,14 @@ import {
 import { Convert, CreateProjectRequest } from "./dtos/CreateProjectRequest";
 
 export async function getOne(
-  event: APIGatewayProxyEvent
-): Promise<APIGatewayProxyResult> {
+  event: APIGatewayProxyEventV2WithJWTAuthorizer
+): Promise<APIGatewayProxyResultV2> {
+  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
   if (!process.env.DYNAMODB_PROJECT_TABLE)
     return internalServerError("Failed to connect to database");
   if (event.pathParameters?.groupme_group_id === undefined)
     return badRequest("Missing id in path");
+  if (!claimedSub) return badRequest("Not authorized");
 
   const dynamoDb = new DynamoDB.DocumentClient();
   const attributes = await dynamoDb
@@ -29,17 +34,19 @@ export async function getOne(
     .promise();
 
   const item = attributes.Item;
-  if (!item) return notFound();
-  const { file_id, ...response } = item;
+  if (!item || item.sub != claimedSub) return notFound();
+  const { file_id, sub, ...response } = item;
   return ok(response);
 }
 
 export async function create(
-  event: APIGatewayProxyEvent
-): Promise<APIGatewayProxyResult> {
+  event: APIGatewayProxyEventV2WithJWTAuthorizer
+): Promise<APIGatewayProxyResultV2> {
+  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
   if (!process.env.DYNAMODB_PROJECT_TABLE)
     return internalServerError("Failed to connect to database");
   if (!event.body) return badRequest("Missing request body");
+  if (!claimedSub) return badRequest("Not authorized");
 
   let body: CreateProjectRequest;
   try {
@@ -54,6 +61,7 @@ export async function create(
     TableName: process.env.DYNAMODB_PROJECT_TABLE,
     Item: {
       file_id: "project",
+      sub: claimedSub,
       ...body,
     },
     ConditionExpression: "attribute_not_exists(groupme_group_id)",

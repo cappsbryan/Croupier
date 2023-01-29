@@ -22,6 +22,19 @@ provider:
             - "dynamodb:UpdateItem"
             - "dynamodb:DeleteItem"
           Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}
+  httpApi:
+    authorizers:
+      serviceAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl:
+          Fn::Join:
+          - ''
+          - - 'https://cognito-idp.'
+            - '${aws:region}'
+            - '.amazonaws.com/'
+            - Ref: serviceUserPool
+        audience:
+          - Ref: serviceUserPoolClient
 
 functions:
   getOneProject:
@@ -30,14 +43,16 @@ functions:
       - httpApi:
           path: /projects/{groupme_group_id}
           method: get
-          # todo: add cognito jwt authorizer
+          authorizer:
+            name: serviceAuthorizer
   createProject:
     handler: src/handler.createProject
     events:
       - httpApi:
           path: /projects
           method: post
-          # todo: add cognito jwt authorizer
+          authorizer:
+            name: serviceAuthorizer
 
 resources:
   Resources:
@@ -58,3 +73,40 @@ resources:
           - AttributeName: file_id
             KeyType: RANGE
         TableName: ${self:service}-projectTable-${sls:stage}
+    serviceUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: croupier-user-pool-${sls:stage}
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+    serviceUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: croupier-user-pool-client-${sls:stage}
+        AllowedOAuthFlows:
+          - implicit
+        AllowedOAuthFlowsUserPoolClient: true
+        AllowedOAuthScopes:
+          - phone
+          - email
+          - openid
+          - profile
+          - aws.cognito.signin.user.admin
+        UserPoolId:
+          Ref: serviceUserPool
+        CallbackURLs: 
+          - http://localhost:3000
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        GenerateSecret: false
+        SupportedIdentityProviders: 
+          - COGNITO
+    serviceUserPoolDomain:
+      Type: AWS::Cognito::UserPoolDomain 
+      Properties:
+        UserPoolId: 
+          Ref: serviceUserPool
+        Domain: croupier-user-pool-domain-${sls:stage}
