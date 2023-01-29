@@ -1,0 +1,60 @@
+service: croupier
+frameworkVersion: "3"
+
+# plugin order matters
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  environment:
+    DYNAMODB_PROJECT_TABLE: ${self:service}-projectTable-${sls:stage}
+  iam:
+    role:
+      statements:
+        - Effect: "Allow"
+          Action:
+            - "dynamodb:PutItem"
+            - "dynamodb:Get*"
+            - "dynamodb:Scan*"
+            - "dynamodb:UpdateItem"
+            - "dynamodb:DeleteItem"
+          Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}
+
+functions:
+  getOneProject:
+    handler: src/handler.getOneProject
+    events:
+      - httpApi:
+          path: /projects/{groupme_group_id}
+          method: get
+          # todo: add cognito jwt authorizer
+  createProject:
+    handler: src/handler.createProject
+    events:
+      - httpApi:
+          path: /projects
+          method: post
+          # todo: add cognito jwt authorizer
+
+resources:
+  Resources:
+    ProjectTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: groupme_group_id
+            AttributeType: S
+          - AttributeName: file_id
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        KeySchema:
+          - AttributeName: groupme_group_id
+            KeyType: HASH
+          - AttributeName: file_id
+            KeyType: RANGE
+        TableName: ${self:service}-projectTable-${sls:stage}
