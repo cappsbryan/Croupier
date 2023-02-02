@@ -12,6 +12,11 @@ import {
 } from "./responses";
 import { Convert, CreateProjectRequest } from "./dtos/CreateProjectRequest";
 
+function projectResponse(project: DynamoDB.DocumentClient.AttributeMap) {
+  const { file_id, subject, ...response } = project;
+  return response;
+}
+
 export async function getOne(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyResultV2> {
@@ -28,15 +33,39 @@ export async function getOne(
       TableName: process.env.DYNAMODB_PROJECT_TABLE,
       Key: {
         groupme_group_id: event.pathParameters.groupme_group_id,
-        file_id: "project",
+        file_id: "!",
       },
     })
     .promise();
 
   const item = attributes.Item;
-  if (!item || item.sub != claimedSub) return notFound();
-  const { file_id, sub, ...response } = item;
-  return ok(response);
+  if (!item || item.subject != claimedSub) return notFound();
+  return ok(projectResponse(item));
+}
+
+export async function getMine(
+  event: APIGatewayProxyEventV2WithJWTAuthorizer
+): Promise<APIGatewayProxyResultV2> {
+  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
+  if (!process.env.DYNAMODB_PROJECT_TABLE)
+    return internalServerError("Failed to connect to database");
+  if (!claimedSub) return badRequest("Not authorized");
+
+  const dynamoDb = new DynamoDB.DocumentClient();
+  const attributes = await dynamoDb
+    .query({
+      TableName: process.env.DYNAMODB_PROJECT_TABLE,
+      IndexName: "subjectIndex",
+      KeyConditionExpression: "subject = :v_subject",
+      ExpressionAttributeValues: {
+        ":v_subject": claimedSub,
+      },
+    })
+    .promise();
+
+  const items = attributes.Items;
+  if (!items) return notFound();
+  return ok(items.map((item) => projectResponse(item)));
 }
 
 export async function create(
@@ -60,8 +89,8 @@ export async function create(
   const putParams = {
     TableName: process.env.DYNAMODB_PROJECT_TABLE,
     Item: {
-      file_id: "project",
-      sub: claimedSub,
+      file_id: "!", // constant indicating this item represents the project, not a file
+      subject: claimedSub,
       ...body,
     },
     ConditionExpression: "attribute_not_exists(groupme_group_id)",

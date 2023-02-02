@@ -17,11 +17,12 @@ provider:
         - Effect: "Allow"
           Action:
             - "dynamodb:PutItem"
-            - "dynamodb:Get*"
-            - "dynamodb:Scan*"
-            - "dynamodb:UpdateItem"
-            - "dynamodb:DeleteItem"
+            - "dynamodb:GetItem"
           Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}
+        - Effect: "Allow"
+          Action:
+            - "dynamodb:Query"
+          Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}/index/*
   httpApi:
     authorizers:
       serviceAuthorizer:
@@ -45,6 +46,14 @@ functions:
           method: get
           authorizer:
             name: serviceAuthorizer
+  getProjects:
+    handler: src/handler.getProjects
+    events:
+      - httpApi:
+          path: /projects
+          method: get
+          authorizer:
+            name: serviceAuthorizer
   createProject:
     handler: src/handler.createProject
     events:
@@ -64,6 +73,8 @@ resources:
             AttributeType: S
           - AttributeName: file_id
             AttributeType: S
+          - AttributeName: subject
+            AttributeType: S
         ProvisionedThroughput:
           ReadCapacityUnits: 1
           WriteCapacityUnits: 1
@@ -72,6 +83,22 @@ resources:
             KeyType: HASH
           - AttributeName: file_id
             KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: subjectIndex
+            KeySchema:
+              - AttributeName: subject
+                KeyType: HASH
+              - AttributeName: groupme_group_id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes:
+                - drive_folder_id
+                - groupme_bot_id
+                - replacements
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
         TableName: ${self:service}-projectTable-${sls:stage}
     serviceUserPool:
       Type: AWS::Cognito::UserPool
