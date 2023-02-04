@@ -1,6 +1,6 @@
 import {
   APIGatewayProxyEventV2WithJWTAuthorizer,
-  APIGatewayProxyResultV2,
+  APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 import { DynamoDB } from "aws-sdk";
 import {
@@ -19,7 +19,7 @@ function projectResponse(project: DynamoDB.DocumentClient.AttributeMap) {
 
 export async function getOne(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
-): Promise<APIGatewayProxyResultV2> {
+): Promise<APIGatewayProxyStructuredResultV2> {
   const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
   if (!process.env.DYNAMODB_PROJECT_TABLE)
     return internalServerError("Failed to connect to database");
@@ -45,7 +45,7 @@ export async function getOne(
 
 export async function getMine(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
-): Promise<APIGatewayProxyResultV2> {
+): Promise<APIGatewayProxyStructuredResultV2> {
   const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
   if (!process.env.DYNAMODB_PROJECT_TABLE)
     return internalServerError("Failed to connect to database");
@@ -70,7 +70,7 @@ export async function getMine(
 
 export async function create(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
-): Promise<APIGatewayProxyResultV2> {
+): Promise<APIGatewayProxyStructuredResultV2> {
   const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
   if (!process.env.DYNAMODB_PROJECT_TABLE)
     return internalServerError("Failed to connect to database");

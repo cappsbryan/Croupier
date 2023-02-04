@@ -1,6 +1,7 @@
 {
   "dependencies": {
-    "aws-sdk": "^2.1298.0"
+    "aws-sdk": "^2.1298.0",
+    "googleapis": "^105.0.0"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.109",
