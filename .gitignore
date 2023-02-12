@@ -7,3 +7,9 @@ jspm_packages
 
 # TypeScript build dir
 .build
+
+# Secrets
+offline_config/
+
+# macOS files
+.DS_Store

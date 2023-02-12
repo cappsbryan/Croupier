@@ -2,18 +2,14 @@ import {
   APIGatewayProxyEventV2WithJWTAuthorizer,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import { DynamoDB } from "aws-sdk";
-import {
-  badRequest,
-  created,
-  internalServerError,
-  notFound,
-  ok,
-} from "./responses";
-import { Convert, CreateProjectRequest } from "./dtos/CreateProjectRequest";
+import { AttributeMap } from "aws-sdk/clients/dynamodb";
 
-function projectResponse(project: DynamoDB.DocumentClient.AttributeMap) {
-  const { file_id, subject, ...response } = project;
+import { badRequest, created, notFound, ok } from "./responses";
+import { Convert, CreateProjectRequest } from "./dtos/CreateProjectRequest";
+import { dynamoDbClient } from "./dynamoDbClient";
+
+function projectResponse(project: AttributeMap) {
+  const { fileId, subject, ...response } = project;
   return response;
 }
 
@@ -21,22 +17,17 @@ export async function getOne(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
   const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  if (!process.env.DYNAMODB_PROJECT_TABLE)
-    return internalServerError("Failed to connect to database");
-  if (event.pathParameters?.groupme_group_id === undefined)
+  if (event.pathParameters?.groupId === undefined)
     return badRequest("Missing id in path");
   if (!claimedSub) return badRequest("Not authorized");
 
-  const dynamoDb = new DynamoDB.DocumentClient();
-  const attributes = await dynamoDb
-    .get({
-      TableName: process.env.DYNAMODB_PROJECT_TABLE,
-      Key: {
-        groupme_group_id: event.pathParameters.groupme_group_id,
-        file_id: "!",
-      },
-    })
-    .promise();
+  const dynamoDb = dynamoDbClient();
+  const attributes = await dynamoDb.get({
+    Key: {
+      groupId: event.pathParameters.groupId,
+      fileId: "!",
+    },
+  });
 
   const item = attributes.Item;
   if (!item || item.subject != claimedSub) return notFound();
@@ -47,21 +38,16 @@ export async function getMine(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
   const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  if (!process.env.DYNAMODB_PROJECT_TABLE)
-    return internalServerError("Failed to connect to database");
   if (!claimedSub) return badRequest("Not authorized");
 
-  const dynamoDb = new DynamoDB.DocumentClient();
-  const attributes = await dynamoDb
-    .query({
-      TableName: process.env.DYNAMODB_PROJECT_TABLE,
-      IndexName: "subjectIndex",
-      KeyConditionExpression: "subject = :v_subject",
-      ExpressionAttributeValues: {
-        ":v_subject": claimedSub,
-      },
-    })
-    .promise();
+  const dynamoDb = dynamoDbClient();
+  const attributes = await dynamoDb.query({
+    IndexName: "subjectIndex",
+    KeyConditionExpression: "subject = :subject",
+    ExpressionAttributeValues: {
+      ":subject": claimedSub,
+    },
+  });
 
   const items = attributes.Items;
   if (!items) return notFound();
@@ -72,8 +58,6 @@ export async function create(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
   const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  if (!process.env.DYNAMODB_PROJECT_TABLE)
-    return internalServerError("Failed to connect to database");
   if (!event.body) return badRequest("Missing request body");
   if (!claimedSub) return badRequest("Not authorized");
 
@@ -84,22 +68,22 @@ export async function create(
     if (e instanceof Error) return badRequest(e.message);
     else throw e;
   }
+  body.keyword = body.keyword.toLowerCase();
 
-  const dynamoDb = new DynamoDB.DocumentClient();
+  const dynamoDb = dynamoDbClient();
   const putParams = {
-    TableName: process.env.DYNAMODB_PROJECT_TABLE,
     Item: {
-      file_id: "!", // constant indicating this item represents the project, not a file
+      fileId: "!", // constant indicating this item represents the project, not a file
       subject: claimedSub,
       ...body,
     },
-    ConditionExpression: "attribute_not_exists(groupme_group_id)",
+    ConditionExpression: "attribute_not_exists(groupId)",
   };
   try {
-    await dynamoDb.put(putParams).promise();
+    await dynamoDb.put(putParams);
   } catch (e: unknown) {
     if (e instanceof Error && e.name === "ConditionalCheckFailedException") {
-      return badRequest("A project with that groupme_group_id already exists");
+      return badRequest("A project with that groupId already exists");
     } else {
       throw e;
     }

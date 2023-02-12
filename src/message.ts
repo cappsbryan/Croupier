@@ -2,20 +2,17 @@ import {
   APIGatewayProxyEventV2WithJWTAuthorizer,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import { DynamoDB } from "aws-sdk";
-import { CredentialBody } from "google-auth-library";
-import { drive_v3, google } from "googleapis";
+
 import { Convert, GroupMeCallback } from "./dtos/GroupMeCallback";
+import { dynamoDbClient, ProjectTableClient } from "./dynamoDbClient";
+import { Image } from "./models/Image";
+import { Project } from "./models/Project";
 import { badRequest, internalServerError, notFound, ok } from "./responses";
 
-const awsSessionToken = process.env.AWS_SESSION_TOKEN as string;
-
-export async function post(
+export async function receiveMessage(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
   if (!event.body) throw badRequest();
-  if (!process.env.DYNAMODB_PROJECT_TABLE)
-    return internalServerError("Failed to connect to database");
 
   let groupMeCallback: GroupMeCallback;
   try {
@@ -24,63 +21,152 @@ export async function post(
     return badRequest(e.message);
   }
 
-  const dynamoDb = new DynamoDB.DocumentClient();
-  const attributes = await dynamoDb
-    .get({
-      TableName: process.env.DYNAMODB_PROJECT_TABLE,
-      Key: {
-        groupme_group_id: groupMeCallback.group_id,
-        file_id: "!",
-      },
-    })
-    .promise();
-  const project = attributes.Item;
-  if (!project) return notFound();
+  const project = await getProject(groupMeCallback.group_id);
+  if (!project)
+    return internalServerError(
+      `Failed to retrieve project associated with group: ${groupMeCallback.group_id}`
+    );
+
+  if (!isFirstWord(groupMeCallback.text, project.keyword)) {
+    return ok({
+      groupId: groupMeCallback.group_id,
+      message: `Ignored message not starting with '${project.keyword}'`,
+    });
+  }
+
+  const search = extractSearch(groupMeCallback.text, project.keyword);
+  const eligibleImages = await searchForImages(search, project);
+  const image = selectImage(eligibleImages);
+  if (!image)
+    return ok({
+      groupId: groupMeCallback.group_id,
+      image: null,
+    });
+  await postImage(image.uri, project.botId);
+  await markAsPosted(project.groupId, image.fileId);
 
   return ok({
-    group_id: project.groupme_group_id,
-    fileCount: await fileCount(project.drive_folder_id),
+    groupId: groupMeCallback.group_id,
+    fileId: image.fileId,
+    uri: image.uri,
   });
 }
 
-async function fileCount(folderId: string): Promise<number> {
-  const drive = await driveClient();
-  const opts = {
-    q: `'${folderId}' in parents`,
-    fields: "nextPageToken, files(id)",
-    pageSize: 1000,
-  };
+const neededProjectKeys = [
+  "groupId",
+  "botId",
+  "keyword",
+  "replacements",
+] as const;
 
-  let res = await drive.files.list(opts);
-  let count = res.data.files?.length ?? 0;
-  while (res.data.nextPageToken) {
-    res = await drive.files.list({
-      ...opts,
-      pageToken: res.data.nextPageToken,
-    });
-    count += res.data.files?.length ?? 0;
-  }
+async function getProject(
+  groupId: string
+): Promise<Pick<Project, typeof neededProjectKeys[number]> | undefined> {
+  const dynamoDb = dynamoDbClient();
+  const attributes = await dynamoDb.get({
+    Key: {
+      groupId: groupId,
+      fileId: "!",
+    },
+    ProjectionExpression: neededProjectKeys.join(", "),
+  });
 
-  return count;
+  return attributes.Item as
+    | Pick<Project, typeof neededProjectKeys[number]>
+    | undefined;
 }
 
-async function driveClient(): Promise<drive_v3.Drive> {
-  const parameterUrl =
-    "http://localhost:2773/systemsmanager/parameters/get?name=croupier-google-service-account-key&withDecryption=true";
-  const parameterRequest = new Request(parameterUrl);
-  parameterRequest.headers.set(
-    "X-Aws-Parameters-Secrets-Token",
-    awsSessionToken
-  );
-  const response = await fetch(parameterRequest);
-  const responseJson = await response.json();
-  const credentialsJson = JSON.parse(responseJson.Parameter.Value);
+function isFirstWord(full: string, word: string): boolean {
+  const words = full.split(" ");
+  if (words.length < 1) return false;
+  return words[0].toLowerCase() == word;
+}
 
-  return google.drive({
-    version: "v3",
-    auth: new google.auth.GoogleAuth({
-      credentials: credentialsJson,
-      scopes: ["https://www.googleapis.com/auth/drive"],
-    }),
+function extractSearch(full: string, keyword: string): string | undefined {
+  const searchBeginIndex = keyword.length + 1;
+  if (full.length <= searchBeginIndex) return undefined;
+  return full.substring(searchBeginIndex).toLowerCase();
+}
+
+const neededImageKeys = ["fileId", "uri", "posted"] as const;
+
+async function searchForImages(
+  search: string | undefined,
+  project: Pick<Project, "groupId" | "replacements">
+): Promise<Pick<Image, typeof neededImageKeys[number]>[]> {
+  const dynamoDb = dynamoDbClient();
+  const filter = filterBasedOnSearch(search, project.replacements);
+
+  const attributes = await dynamoDb.fullQuery({
+    KeyConditionExpression: "groupId = :groupId AND fileId > :fileId",
+    ExpressionAttributeValues: {
+      ":groupId": project.groupId,
+      ":fileId": "!",
+      ...filter?.expressionAttributeValues,
+    },
+    FilterExpression: filter?.filterExpression,
+    ProjectionExpression: neededImageKeys.join(", "),
+  });
+
+  const images = attributes.Items as
+    | Pick<Image, typeof neededImageKeys[number]>[]
+    | undefined;
+  return images || [];
+}
+
+function filterBasedOnSearch(
+  search: string | undefined,
+  replacements: Record<string, string>
+) {
+  // no filter needed if there's no search
+  if (!search) return;
+
+  const replacedWords = search.split(" ").map((word, index) => ({
+    placeholder: `:${index}`,
+    value: replacements[word] ?? word,
+  }));
+  const filterExpression = replacedWords
+    .map((word) => `contains(fname, ${word.placeholder})`)
+    .join(" AND ");
+  const expressionAttributeValues = Object.fromEntries(
+    replacedWords.map((word) => [word.placeholder, word.value])
+  );
+  return {
+    filterExpression,
+    expressionAttributeValues,
+  };
+}
+
+function selectImage<Img extends { posted: number | undefined }>(
+  images: Img[]
+): Img | undefined {
+  // TODO: Add some randomness to which eligible image is picked
+  if (images.length <= 0) return;
+  images.sort((a, b) => {
+    if (a.posted === b.posted) return 0;
+    if (!a.posted) return -1;
+    if (!b.posted) return 1;
+    return a.posted - b.posted;
+  });
+  return images[0];
+}
+
+async function postImage(imageUri: string, groupMeBotId: string) {
+  // TODO: Post image to group
+}
+
+async function markAsPosted(groupId: string, fileId: string) {
+  const dynamoDb = dynamoDbClient();
+  const date = Date.now();
+
+  await dynamoDb.update({
+    Key: {
+      groupId: groupId,
+      fileId: fileId,
+    },
+    UpdateExpression: "SET posted = :p",
+    ExpressionAttributeValues: {
+      ":p": date,
+    },
   });
 }

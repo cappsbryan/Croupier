@@ -18,6 +18,8 @@ provider:
           Action:
             - "dynamodb:PutItem"
             - "dynamodb:GetItem"
+            - "dynamodb:Query"
+            - "dynamodb:UpdateItem"
           Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}
         - Effect: "Allow"
           Action:
@@ -46,7 +48,7 @@ functions:
     handler: src/handler.getOneProject
     events:
       - httpApi:
-          path: /projects/{groupme_group_id}
+          path: /projects/{groupId}
           method: get
           authorizer:
             name: serviceAuthorizer
@@ -66,8 +68,8 @@ functions:
           method: post
           authorizer:
             name: serviceAuthorizer
-  postMessage:
-    handler: src/handler.postMessage
+  receiveMessage:
+    handler: src/handler.receiveMessage
     timeout: 29
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
@@ -82,9 +84,9 @@ resources:
       Type: AWS::DynamoDB::Table
       Properties:
         AttributeDefinitions:
-          - AttributeName: groupme_group_id
+          - AttributeName: groupId
             AttributeType: S
-          - AttributeName: file_id
+          - AttributeName: fileId
             AttributeType: S
           - AttributeName: subject
             AttributeType: S
@@ -92,22 +94,22 @@ resources:
           ReadCapacityUnits: 1
           WriteCapacityUnits: 1
         KeySchema:
-          - AttributeName: groupme_group_id
+          - AttributeName: groupId
             KeyType: HASH
-          - AttributeName: file_id
+          - AttributeName: fileId
             KeyType: RANGE
         GlobalSecondaryIndexes:
           - IndexName: subjectIndex
             KeySchema:
               - AttributeName: subject
                 KeyType: HASH
-              - AttributeName: groupme_group_id
+              - AttributeName: groupId
                 KeyType: RANGE
             Projection:
               ProjectionType: INCLUDE
               NonKeyAttributes:
-                - drive_folder_id
-                - groupme_bot_id
+                - folderId
+                - botId
                 - replacements
             ProvisionedThroughput:
               ReadCapacityUnits: 1
