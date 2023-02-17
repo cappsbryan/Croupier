@@ -13,6 +13,7 @@ export interface CreateProjectRequest {
   botId: string;
   keyword: string;
   replacements: { [key: string]: string };
+  emojis: string[];
 }
 
 // Converts JSON strings to/from your types
@@ -219,6 +220,7 @@ const typeMap: any = {
       { json: "botId", js: "botId", typ: "" },
       { json: "keyword", js: "keyword", typ: "" },
       { json: "replacements", js: "replacements", typ: m("") },
+      { json: "emojis", js: "emojis", typ: a("") },
     ],
     false
   ),

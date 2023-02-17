@@ -12,7 +12,7 @@ import { badRequest, internalServerError, notFound, ok } from "./responses";
 export async function receiveMessage(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  if (!event.body) throw badRequest();
+  if (!event.body) return badRequest();
 
   let groupMeCallback: GroupMeCallback;
   try {
@@ -42,7 +42,7 @@ export async function receiveMessage(
       groupId: groupMeCallback.group_id,
       image: null,
     });
-  await postImage(image.uri, project.botId);
+  await postImage(image.uri, project.botId, project.emojis);
   await markAsPosted(project.groupId, image.fileId);
 
   return ok({
@@ -57,6 +57,7 @@ const neededProjectKeys = [
   "botId",
   "keyword",
   "replacements",
+  "emojis",
 ] as const;
 
 async function getProject(
@@ -151,8 +152,34 @@ function selectImage<Img extends { posted: number | undefined }>(
   return images[0];
 }
 
-async function postImage(imageUri: string, groupMeBotId: string) {
-  // TODO: Post image to group
+async function postImage(
+  imageUri: string,
+  groupMeBotId: string,
+  emojis: string[]
+) {
+  const emoji = emojis[getRandomInt(0, emojis.length)];
+  await fetch("https://api.groupme.com/v3/bots/post", {
+    method: "post",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      bot_id: groupMeBotId,
+      text: `Here's a picture ${emoji}`,
+      attachments: [
+        {
+          type: "image",
+          url: imageUri,
+        },
+      ],
+    }),
+  });
+}
+
+function getRandomInt(min: number, max: number): number {
+  min = Math.ceil(min);
+  max = Math.floor(max);
+  return Math.floor(Math.random() * (max - min) + min); // The maximum is exclusive and the minimum is inclusive
 }
 
 async function markAsPosted(groupId: string, fileId: string) {

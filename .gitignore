@@ -9,7 +9,10 @@ jspm_packages
 .build
 
 # Secrets
-offline_config/
+offline_secrets/
 
 # macOS files
 .DS_Store
+
+# Editors
+.vscode/

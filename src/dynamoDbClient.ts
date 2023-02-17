@@ -47,6 +47,21 @@ export class ProjectTableClient {
       .promise();
   }
 
+  batchWrite(
+    params: ProjectTableClient.BatchWriteItemInput
+  ): Promise<DocumentClient.BatchWriteItemOutput> {
+    const { RequestItems, ...otherParams } = params;
+    const tableRequestItems = {
+      [this.tableName]: RequestItems,
+    };
+    return this.documentClient
+      .batchWrite({
+        RequestItems: tableRequestItems,
+        ...otherParams,
+      })
+      .promise();
+  }
+
   query(
     params: ProjectTableClient.QueryInput
   ): Promise<DocumentClient.QueryOutput> {
@@ -94,6 +109,10 @@ export namespace ProjectTableClient {
   export type GetItemInput = OmitTableName<DocumentClient.GetItemInput>;
   export type PutItemInput = OmitTableName<DocumentClient.PutItemInput>;
   export type UpdateItemInput = OmitTableName<DocumentClient.UpdateItemInput>;
+  export type BatchWriteItemInput = Omit<
+    DocumentClient.BatchWriteItemInput,
+    "RequestItems"
+  > & { RequestItems: DocumentClient.WriteRequests };
   export type QueryInput = OmitTableName<DocumentClient.QueryInput>;
   export type FullQueryOutput = Omit<
     DocumentClient.QueryOutput,

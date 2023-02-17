@@ -69,6 +69,9 @@ export async function create(
     else throw e;
   }
   body.keyword = body.keyword.toLowerCase();
+  for (const [key, value] of Object.entries(body.replacements)) {
+    body.replacements[key.toLowerCase()] = value.toLowerCase();
+  }
 
   const dynamoDb = dynamoDbClient();
   const putParams = {

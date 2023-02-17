@@ -20,6 +20,7 @@ provider:
             - "dynamodb:GetItem"
             - "dynamodb:Query"
             - "dynamodb:UpdateItem"
+            - "dynamodb:BatchWriteItem"
           Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}
         - Effect: "Allow"
           Action:
@@ -28,7 +29,9 @@ provider:
         - Effect: "Allow"
           Action:
             - "ssm:GetParameter"
-          Resource: arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/croupier-google-service-account-key
+          Resource:
+            - arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/croupier-google-service-account-key
+            - arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/croupier-groupme-access-token
   httpApi:
     authorizers:
       serviceAuthorizer:
@@ -70,13 +73,21 @@ functions:
             name: serviceAuthorizer
   receiveMessage:
     handler: src/handler.receiveMessage
+    events:
+      - httpApi:
+          path: /message
+          method: post
+  processImages:
+    handler: src/handler.processImages
     timeout: 29
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
     events:
       - httpApi:
-          path: /message
+          path: /processImages/{groupId}
           method: post
+          authorizer:
+            name: serviceAuthorizer
 
 resources:
   Resources:
@@ -111,6 +122,7 @@ resources:
                 - folderId
                 - botId
                 - replacements
+                - emojis
             ProvisionedThroughput:
               ReadCapacityUnits: 1
               WriteCapacityUnits: 1
