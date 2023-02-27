@@ -1,22 +1,31 @@
 import { APIGatewayProxyResult } from "aws-lambda";
 
-export function ok(item: any): APIGatewayProxyResult {
+export function ok(item: any, location?: string): APIGatewayProxyResult {
   return {
     statusCode: 200,
     body: JSON.stringify(item),
     headers: {
       "Content-Type": "application/json",
+      ...(location && { "Content-Location": location }),
     },
   };
 }
 
-export function created(item: any): APIGatewayProxyResult {
+export function created(item: any, location: string): APIGatewayProxyResult {
   return {
     statusCode: 201,
     body: JSON.stringify(item),
     headers: {
       "Content-Type": "application/json",
+      "Content-Location": location,
     },
+  };
+}
+
+export function noContent(): APIGatewayProxyResult {
+  return {
+    statusCode: 204,
+    body: "",
   };
 }
 

@@ -3,11 +3,15 @@ import {
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 
+import { Readable } from "stream";
+import { driveClient } from "./driveClient";
+
 import { Convert, GroupMeCallback } from "./dtos/GroupMeCallback";
-import { dynamoDbClient, ProjectTableClient } from "./dynamoDbClient";
+import { dynamoDbClient } from "./dynamoDbClient";
 import { Image } from "./models/Image";
 import { Project } from "./models/Project";
-import { badRequest, internalServerError, notFound, ok } from "./responses";
+import { badRequest, internalServerError, ok } from "./responses";
+import { groupmeAccessToken } from "./secrets";
 
 export async function receiveMessage(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
@@ -35,15 +39,31 @@ export async function receiveMessage(
   }
 
   const search = extractSearch(groupMeCallback.text, project.keyword);
+  console.info("received search:", search);
   const eligibleImages = await searchForImages(search, project);
+  console.info("found %d eligible images", eligibleImages.length);
   const image = selectImage(eligibleImages);
   if (!image)
     return ok({
       groupId: groupMeCallback.group_id,
       image: null,
     });
-  await postImage(image.uri, project.botId, project.emojis);
-  await markAsPosted(project.groupId, image.fileId);
+  console.info("posting file id:", image.fileId);
+
+  let uri = image.uri;
+  if (!uri) {
+    const imageData = await downloadNewImage(image.fileId);
+    uri = await uploadNewImage(
+      image.fileId,
+      imageData.stream,
+      imageData.mimeType
+    );
+  }
+  if (!uri) return internalServerError("Failed to upload image");
+  console.info("groupme image url:", uri);
+
+  await postImage(uri, project.botId, project.emojis);
+  await markAsPosted(project.groupId, image.fileId, uri);
 
   return ok({
     groupId: groupMeCallback.group_id,
@@ -99,10 +119,10 @@ async function searchForImages(
   const filter = filterBasedOnSearch(search, project.replacements);
 
   const attributes = await dynamoDb.fullQuery({
-    KeyConditionExpression: "groupId = :groupId AND fileId > :fileId",
+    KeyConditionExpression: "groupId = :g AND fileId > :f",
     ExpressionAttributeValues: {
-      ":groupId": project.groupId,
-      ":fileId": "!",
+      ":g": project.groupId,
+      ":f": "!",
       ...filter?.expressionAttributeValues,
     },
     FilterExpression: filter?.filterExpression,
@@ -138,18 +158,69 @@ function filterBasedOnSearch(
   };
 }
 
-function selectImage<Img extends { posted: number | undefined }>(
+function selectImage<Img extends Pick<Image, "posted">>(
   images: Img[]
 ): Img | undefined {
   // TODO: Add some randomness to which eligible image is picked
   if (images.length <= 0) return;
-  images.sort((a, b) => {
-    if (a.posted === b.posted) return 0;
-    if (!a.posted) return -1;
-    if (!b.posted) return 1;
-    return a.posted - b.posted;
+
+  const weightedIndices = images.flatMap((image, index): number[] => {
+    if (image.posted) {
+      const delta = Date.now() - image.posted;
+      const days = Math.max(60, delta / 86_400_000);
+      const count = Math.ceil(days ** 2 / 35);
+      return Array(count).fill(index);
+    } else {
+      return Array(300).fill(index);
+    }
   });
-  return images[0];
+
+  const randomIndex = Math.floor(Math.random() * weightedIndices.length);
+  return images[weightedIndices[randomIndex]];
+}
+
+async function downloadNewImage(
+  fileId: string
+): Promise<{ stream: ReadableStream; mimeType: string }> {
+  const drive = await driveClient();
+
+  console.log(`Downloading file ${fileId}...`);
+  const driveResponse = await drive.files.get(
+    {
+      fileId: fileId,
+      alt: "media",
+    },
+    { responseType: "stream" }
+  );
+  const mimeType = driveResponse.headers["content-type"];
+  const stream = Readable.toWeb(driveResponse.data) as any;
+  return { stream, mimeType };
+}
+
+async function uploadNewImage(
+  fileId: string,
+  stream: ReadableStream,
+  mimeType: string
+): Promise<string | undefined> {
+  console.log(`Uploading file ${fileId}...`);
+  const uploadResponse = await fetch("https://image.groupme.com/pictures", {
+    body: stream as any, // some sort of TypeScript bug?
+    method: "post",
+    headers: {
+      "X-Access-Token": await groupmeAccessToken(),
+      "Content-Type": mimeType,
+    },
+  });
+  const uploadResponseBody = await uploadResponse.json();
+  const imageUrl: string | undefined = uploadResponseBody?.payload?.url;
+  if (!imageUrl) {
+    console.warn("upload response:", uploadResponseBody);
+    console.warn("upload response headers:");
+    uploadResponse.headers.forEach((value, key) => {
+      console.warn(`${key}: ${value}`);
+    });
+  }
+  return imageUrl;
 }
 
 async function postImage(
@@ -157,7 +228,7 @@ async function postImage(
   groupMeBotId: string,
   emojis: string[]
 ) {
-  const emoji = emojis[getRandomInt(0, emojis.length)];
+  const emoji = emojis[getRandomInt(emojis.length)];
   await fetch("https://api.groupme.com/v3/bots/post", {
     method: "post",
     headers: {
@@ -176,13 +247,11 @@ async function postImage(
   });
 }
 
-function getRandomInt(min: number, max: number): number {
-  min = Math.ceil(min);
-  max = Math.floor(max);
-  return Math.floor(Math.random() * (max - min) + min); // The maximum is exclusive and the minimum is inclusive
+function getRandomInt(max: number): number {
+  return Math.floor(Math.random() * max);
 }
 
-async function markAsPosted(groupId: string, fileId: string) {
+async function markAsPosted(groupId: string, fileId: string, uri: string) {
   const dynamoDb = dynamoDbClient();
   const date = Date.now();
 
@@ -191,9 +260,10 @@ async function markAsPosted(groupId: string, fileId: string) {
       groupId: groupId,
       fileId: fileId,
     },
-    UpdateExpression: "SET posted = :p",
+    UpdateExpression: "SET posted=:p, uri=:u",
     ExpressionAttributeValues: {
       ":p": date,
+      ":u": uri,
     },
   });
 }

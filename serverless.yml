@@ -11,6 +11,7 @@ provider:
   runtime: nodejs18.x
   environment:
     DYNAMODB_PROJECT_TABLE: ${self:service}-projectTable-${sls:stage}
+    PROCESS_IMAGES_FUNCTION_NAME: ${self:service}-${sls:stage}-processImages
   iam:
     role:
       statements:
@@ -30,8 +31,12 @@ provider:
           Action:
             - "ssm:GetParameter"
           Resource:
-            - arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/croupier-google-service-account-key
-            - arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/croupier-groupme-access-token
+            - arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/${self:service}-google-service-account-key
+            - arn:aws:ssm:${aws:region}:${aws:accountId}:parameter/${self:service}-groupme-access-token
+        - Effect: "Allow"
+          Action:
+            - "lambda:InvokeFunction"
+          Resource: arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-processImages
   httpApi:
     authorizers:
       serviceAuthorizer:
@@ -48,7 +53,7 @@ provider:
 
 functions:
   getOneProject:
-    handler: src/handler.getOneProject
+    handler: src/projects.getOne
     events:
       - httpApi:
           path: /projects/{groupId}
@@ -56,7 +61,7 @@ functions:
           authorizer:
             name: serviceAuthorizer
   getProjects:
-    handler: src/handler.getProjects
+    handler: src/projects.getMine
     events:
       - httpApi:
           path: /projects
@@ -64,28 +69,63 @@ functions:
           authorizer:
             name: serviceAuthorizer
   createProject:
-    handler: src/handler.createProject
+    handler: src/projects.create
     events:
       - httpApi:
           path: /projects
           method: post
           authorizer:
             name: serviceAuthorizer
+  updateOneProject:
+    handler: src/projects.updateOne
+    events:
+      - httpApi:
+          path: /projects/{groupId}
+          method: put
+          authorizer:
+            name: serviceAuthorizer
+  deleteOneProject:
+    handler: src/projects.deleteOne
+    timeout: 29
+    events:
+      - httpApi:
+          path: /projects/{groupId}
+          method: delete
+          authorizer:
+            name: serviceAuthorizer
   receiveMessage:
-    handler: src/handler.receiveMessage
+    handler: src/message.receiveMessage
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
     events:
       - httpApi:
           path: /message
           method: post
   processImages:
-    handler: src/handler.processImages
+    handler: src/images.process
+    timeout: 300
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+  processImagesHTTP:
+    handler: src/images.processHTTP
     timeout: 29
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
     events:
       - httpApi:
-          path: /processImages/{groupId}
+          path: /projects/{groupId}/process
           method: post
+          authorizer:
+            name: serviceAuthorizer
+  checkProcess:
+    handler: src/images.checkProcess
+    timeout: 29
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+    events:
+      - httpApi:
+          path: /projects/{groupId}/process
+          method: get
           authorizer:
             name: serviceAuthorizer
 

@@ -5,114 +5,117 @@ import {
 import { DocumentClient } from "aws-sdk/clients/dynamodb";
 import { drive_v3 } from "googleapis";
 
-import { Readable } from "stream";
-import { ReadableStream } from "stream/web";
-
 import { driveClient } from "./driveClient";
 import { dynamoDbClient, ProjectTableClient } from "./dynamoDbClient";
 import { Image } from "./models/Image";
 import { Project } from "./models/Project";
 import { badRequest, internalServerError, notFound, ok } from "./responses";
-import { groupmeAccessToken } from "./secrets";
 
+export async function checkProcess(
+  event: APIGatewayProxyEventV2WithJWTAuthorizer
+): Promise<APIGatewayProxyStructuredResultV2> {
+  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
+  const groupId = event.pathParameters?.groupId;
+  if (!groupId) return badRequest("Missing id in path");
+  if (!claimedSub) return badRequest("Not authorized");
+
+  const dbResult = await projectAndImages(groupId);
+  if (!dbResult || claimedSub !== dbResult.project.subject) return notFound();
+
+  const [driveFiles, dbImages] = await Promise.all([
+    driveQuery(driveClient(), dbResult.project.folderId),
+    dbResult.images,
+  ]);
+  if (!driveFiles)
+    return internalServerError("Failed to retrieve files from Google Drive");
+  if (!dbImages)
+    return internalServerError("Failed to retrieve image data from db");
+
+  return ok({
+    processed: dbImages.length,
+    total: driveFiles.length,
+  });
+}
+
+export async function processHTTP(
+  event: APIGatewayProxyEventV2WithJWTAuthorizer
+): Promise<APIGatewayProxyStructuredResultV2> {
+  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
+  const groupId = event.pathParameters?.groupId;
+  return process({ claimedSub, groupId });
+}
+
+export async function process(event: {
+  claimedSub: string | number | boolean | string[] | undefined;
+  groupId: string | undefined;
+}): Promise<APIGatewayProxyStructuredResultV2> {
+  if (!event.groupId) return badRequest("Missing id in path");
+  if (!event.claimedSub) return badRequest("Not authorized");
+  const groupId = event.groupId;
+
+  const dbResult = await projectAndImages(groupId);
+  if (!dbResult || event.claimedSub !== dbResult.project.subject)
+    return notFound();
+
+  const [driveFiles, dbImages] = await Promise.all([
+    driveQuery(driveClient(), dbResult.project.folderId),
+    dbResult.images,
+  ]);
+  if (!driveFiles)
+    return internalServerError("Failed to retrieve files from Google Drive");
+  if (!dbImages)
+    return internalServerError("Failed to retrieve image data from db");
+
+  const dbImagesMap: Record<string, QueryImageResult | undefined> =
+    Object.fromEntries(dbImages.map((image) => [image.fileId, image]));
+  const driveFilesMap: Record<string, ValidDriveImage | undefined> =
+    Object.fromEntries(driveFiles.map((file) => [file.id, file]));
+  const extraImages = dbImages.filter((image) => !driveFilesMap[image.fileId]);
+
+  const dynamoDb = dynamoDbClient();
+  await dynamoDb.batchWrite({
+    RequestItems: [
+      ...driveFiles.map((file) => {
+        const dbImage = dbImagesMap[file.id];
+        const image: Image = {
+          groupId: groupId,
+          fileId: file.id,
+          version: file.version,
+          fname: file.name.toLowerCase(),
+          uri: file.version === dbImage?.version ? dbImage.uri : undefined,
+          posted:
+            file.version === dbImage?.version ? dbImage.posted : undefined,
+        };
+        return {
+          PutRequest: {
+            Item: image,
+          },
+        };
+      }),
+      ...extraImages.map((image) => ({
+        DeleteRequest: {
+          Key: {
+            groupId: event.groupId,
+            fileId: image.fileId,
+          },
+        },
+      })),
+    ],
+  });
+
+  return ok({ message: `Processed ${driveFiles.length} images` });
+}
+
+const driveFilesFields = ["id", "mimeType", "name", "version"] as const;
 type ValidDriveImage = {
-  id: string;
-  mimeType: string;
-  name: string;
+  [key in keyof drive_v3.Schema$File &
+    typeof driveFilesFields[number]]: NonNullable<drive_v3.Schema$File[key]>;
 };
 
 function isValidDriveImage(
   file: drive_v3.Schema$File
 ): file is ValidDriveImage {
-  return !!file.id && !!file.mimeType && !!file.name;
-}
-
-export async function processImages(
-  event: APIGatewayProxyEventV2WithJWTAuthorizer
-): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  const groupId = event.pathParameters?.groupId;
-
-  if (!groupId) return badRequest("Missing id in path");
-  if (!claimedSub) return badRequest("Not authorized");
-
-  const dbResult = await projectAndImagesWithUri(groupId);
-
-  if (!dbResult || claimedSub != dbResult.project.subject) return notFound();
-
-  const [driveFiles, imagesWithUri] = await Promise.all([
-    driveQuery(driveClient(), dbResult.project.folderId),
-    dbResult.imagesWithUri,
-  ]);
-  if (!driveFiles)
-    return internalServerError("Failed to retrieve files from Google Drive");
-  if (!imagesWithUri)
-    return internalServerError("Failed to retrieve image data from db");
-
-  const doneImageIds = new Set(imagesWithUri.map((image) => image.fileId));
-  const newImageFiles = driveFiles.filter((file) => !doneImageIds.has(file.id));
-
-  const dynamoDb = dynamoDbClient();
-  const chunkSize = 25; // max number of requests in a BatchWriteItem
-  for (let i = 0; i < 1; i += chunkSize) {
-    const chunk = newImageFiles.slice(i, i + chunkSize);
-    let imageDataStreams: ReadableStream[] = [];
-    for (const file of chunk) {
-      imageDataStreams.push(await downloadNewImage(file.id));
-    }
-    const imageUrls = await Promise.all(
-      imageDataStreams.map((stream, i) =>
-        uploadNewImage(chunk[i].id, stream, chunk[i].mimeType)
-      )
-    );
-    await dynamoDb.batchWrite({
-      RequestItems: chunk.map((file, index) => ({
-        PutRequest: {
-          Item: {
-            groupId: groupId,
-            fileId: file.id,
-            fname: file.name.toLowerCase(),
-            uri: imageUrls[index],
-          },
-        },
-      })),
-    });
-  }
-
-  return ok("Processed images");
-}
-
-async function downloadNewImage(fileId: string): Promise<ReadableStream> {
-  const drive = await driveClient();
-
-  console.log(`Downloading file ${fileId}...`);
-  const driveResponse = await drive.files.get(
-    {
-      fileId: fileId,
-      alt: "media",
-    },
-    { responseType: "stream" }
-  );
-  return Readable.toWeb(driveResponse.data);
-}
-
-async function uploadNewImage(
-  fileId: string,
-  stream: ReadableStream,
-  mimeType: string
-): Promise<string> {
-  console.log(`Uploading file ${fileId}...`);
-  const uploadResponse = await fetch("https://image.groupme.com/pictures", {
-    body: stream as any,
-    method: "post",
-    headers: {
-      "X-Access-Token": await groupmeAccessToken(),
-      "Content-Type": mimeType,
-    },
-  });
-  const uploadResponseBody = await uploadResponse.json();
-  const imageUrl: string = uploadResponseBody?.payload?.url;
-  return imageUrl;
+  return !!file.id && !!file.mimeType && !!file.name && !!file.version;
 }
 
 async function driveQuery(
@@ -122,7 +125,8 @@ async function driveQuery(
 ): Promise<ValidDriveImage[] | undefined> {
   const client = await clientPromise;
   const listResponse = await client.files.list({
-    q: `'${folderId}' in parents and mimeType contains 'image/'`,
+    q: `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`,
+    fields: `nextPageToken,files(${driveFilesFields.join()})`,
     pageSize: 1000,
     pageToken: pageToken,
   });
@@ -149,53 +153,47 @@ async function driveQuery(
   return files.concat(additionalFiles);
 }
 
-const queryProjection = ["groupId", "fileId", "folderId", "subject"] as const;
-type QueryProjectResult = Pick<Project, typeof queryProjection[number]>;
-type QueryImagesResult = Pick<
+const queryProjection = [
+  "groupId",
+  "fileId",
+  "version",
+  "folderId",
+  "subject",
+  "uri",
+  "posted",
+] as const;
+type QueryProjectResult = Pick<
+  Project,
+  Extract<typeof queryProjection[number], keyof Project>
+>;
+type QueryImageResult = Pick<
   Image,
   Extract<typeof queryProjection[number], keyof Image>
->[];
+>;
 type QueryResult = {
   project: QueryProjectResult;
-  imagesWithUri: Promise<QueryImagesResult | undefined>;
+  images: QueryImageResult[];
 };
 
-async function projectAndImagesWithUri(
+async function projectAndImages(
   groupId: string
 ): Promise<QueryResult | undefined> {
   const dynamoDb = dynamoDbClient();
-  const params: ProjectTableClient.QueryInput = {
+  const attributes = await dynamoDb.fullQuery({
     KeyConditionExpression: "groupId = :g",
     ExpressionAttributeValues: { ":g": groupId },
-    FilterExpression: "attribute_exists(uri) OR attribute_exists(folderId)",
     ProjectionExpression: queryProjection.join(", "),
-  };
-  const attributes = await dynamoDb.query(params);
-  const items = attributes.Items as QueryImagesResult | undefined;
+  });
+  const items = attributes.Items as
+    | (QueryProjectResult | QueryImageResult)[]
+    | undefined;
   if (!items || items.length === 0) return;
 
+  const project = items[0];
+  const images = items.slice(1);
+
   return {
-    project: items[0] as QueryProjectResult,
-    imagesWithUri: continueDbQuery(
-      items.slice(1),
-      params,
-      attributes.LastEvaluatedKey
-    ),
+    project: project as QueryProjectResult,
+    images: images as QueryImageResult[],
   };
-}
-
-async function continueDbQuery(
-  firstImages: QueryImagesResult,
-  params: ProjectTableClient.QueryInput,
-  startKey: DocumentClient.Key | undefined
-): Promise<QueryImagesResult | undefined> {
-  const dynamoDb = dynamoDbClient();
-  const attributes = await dynamoDb.fullQuery({
-    ...params,
-    ExclusiveStartKey: startKey,
-  });
-  const items = attributes.Items as QueryImagesResult | undefined;
-  if (!items) return;
-
-  return firstImages.concat(items);
 }
