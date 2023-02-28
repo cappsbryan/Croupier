@@ -4,6 +4,7 @@ import {
 } from "aws-lambda";
 
 import { Readable } from "stream";
+import { ReadableStream } from "stream/web";
 import { driveClient } from "./driveClient";
 
 import { Convert, GroupMeCallback } from "./dtos/GroupMeCallback";
@@ -12,6 +13,41 @@ import { Image } from "./models/Image";
 import { Project } from "./models/Project";
 import { badRequest, internalServerError, ok } from "./responses";
 import { groupmeAccessToken } from "./secrets";
+
+export async function dailyMessage(event: { groupId: string }) {
+  const project = await getProject(event.groupId);
+  if (!project)
+    return internalServerError(
+      `Failed to retrieve project associated with group: ${event.groupId}`
+    );
+
+  const eligibleImages = await searchForImages(undefined, project);
+  console.info("found %d eligible images", eligibleImages.length);
+  const image = selectImage(eligibleImages);
+  if (!image)
+    return ok({
+      groupId: event.groupId,
+      image: null,
+    });
+  console.info("posting file id:", image.fileId);
+
+  let uri = image.uri;
+  if (!uri) {
+    const imageData = await downloadImage(image.fileId);
+    uri = await uploadImage(image.fileId, imageData.stream, imageData.mimeType);
+  }
+  if (!uri) return internalServerError("Failed to upload image");
+  console.info("groupme image url:", uri);
+
+  await postImage(uri, project.botId, project.emojis);
+  await markAsPosted(project.groupId, image.fileId, uri);
+
+  return ok({
+    groupId: event.groupId,
+    fileId: image.fileId,
+    uri: image.uri,
+  });
+}
 
 export async function receiveMessage(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
@@ -52,12 +88,8 @@ export async function receiveMessage(
 
   let uri = image.uri;
   if (!uri) {
-    const imageData = await downloadNewImage(image.fileId);
-    uri = await uploadNewImage(
-      image.fileId,
-      imageData.stream,
-      imageData.mimeType
-    );
+    const imageData = await downloadImage(image.fileId);
+    uri = await uploadImage(image.fileId, imageData.stream, imageData.mimeType);
   }
   if (!uri) return internalServerError("Failed to upload image");
   console.info("groupme image url:", uri);
@@ -179,7 +211,7 @@ function selectImage<Img extends Pick<Image, "posted">>(
   return images[weightedIndices[randomIndex]];
 }
 
-async function downloadNewImage(
+async function downloadImage(
   fileId: string
 ): Promise<{ stream: ReadableStream; mimeType: string }> {
   const drive = await driveClient();
@@ -193,24 +225,29 @@ async function downloadNewImage(
     { responseType: "stream" }
   );
   const mimeType = driveResponse.headers["content-type"];
-  const stream = Readable.toWeb(driveResponse.data) as any;
+  const stream = Readable.toWeb(driveResponse.data);
   return { stream, mimeType };
 }
 
-async function uploadNewImage(
+async function uploadImage(
   fileId: string,
   stream: ReadableStream,
   mimeType: string
 ): Promise<string | undefined> {
   console.log(`Uploading file ${fileId}...`);
-  const uploadResponse = await fetch("https://image.groupme.com/pictures", {
-    body: stream as any, // some sort of TypeScript bug?
+  const info: RequestInit & { duplex: "half" } = {
+    body: stream as any, // some sort of TypeScript bug? ReadableStream != ReadableStream
+    duplex: "half", // duplex is required if body is a stream, but TypeScript doesn't know it
     method: "post",
     headers: {
       "X-Access-Token": await groupmeAccessToken(),
       "Content-Type": mimeType,
     },
-  });
+  };
+  const uploadResponse = await fetch(
+    "https://image.groupme.com/pictures",
+    info
+  );
   const uploadResponseBody = await uploadResponse.json();
   const imageUrl: string | undefined = uploadResponseBody?.payload?.url;
   if (!imageUrl) {

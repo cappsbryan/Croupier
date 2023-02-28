@@ -12,6 +12,7 @@ provider:
   environment:
     DYNAMODB_PROJECT_TABLE: ${self:service}-projectTable-${sls:stage}
     PROCESS_IMAGES_FUNCTION_NAME: ${self:service}-${sls:stage}-processImages
+    EVENT_RULE_NAME_PREFIX: ${self:service}-${sls:stage}-user-schedule-
   iam:
     role:
       statements:
@@ -22,11 +23,13 @@ provider:
             - "dynamodb:Query"
             - "dynamodb:UpdateItem"
             - "dynamodb:BatchWriteItem"
-          Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}
+          Resource:
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}
         - Effect: "Allow"
           Action:
             - "dynamodb:Query"
-          Resource: arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}/index/*
+          Resource:
+            - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}/index/*
         - Effect: "Allow"
           Action:
             - "ssm:GetParameter"
@@ -36,7 +39,21 @@ provider:
         - Effect: "Allow"
           Action:
             - "lambda:InvokeFunction"
-          Resource: arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-processImages
+          Resource:
+            - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-processImages
+        - Effect: "Allow"
+          Action:
+            - "events:DescribeRule"
+            - "events:PutRule"
+            - "events:PutTargets"
+          Resource:
+            - arn:aws:events:${aws:region}:${aws:accountId}:rule/${self:service}-${sls:stage}-user-schedule-*
+        - Effect: "Allow"
+          Action:
+            - "lambda:GetPolicy"
+            - "lambda:AddPermission"
+          Resource:
+            - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-dailyMessage
   httpApi:
     authorizers:
       serviceAuthorizer:
@@ -101,6 +118,29 @@ functions:
       - httpApi:
           path: /message
           method: post
+  dailyMessage:
+    handler: src/message.dailyMessage
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+  setSchedule:
+    handler: src/schedule.set
+    environment:
+      DAILY_MESSAGE_FUNCTION_ARN: !GetAtt DailyMessageLambdaFunction.Arn
+      DAILY_MESSAGE_FUNCTION_NAME: !Ref DailyMessageLambdaFunction
+    events:
+      - httpApi:
+          path: /projects/{groupId}/schedule
+          method: put
+          authorizer:
+            name: serviceAuthorizer
+  getSchedule:
+    handler: src/schedule.get
+    events:
+      - httpApi:
+          path: /projects/{groupId}/schedule
+          method: get
+          authorizer:
+            name: serviceAuthorizer
   processImages:
     handler: src/images.process
     timeout: 300
