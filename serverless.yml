@@ -12,7 +12,16 @@ provider:
   environment:
     DYNAMODB_PROJECT_TABLE: ${self:service}-projectTable-${sls:stage}
     PROCESS_IMAGES_FUNCTION_NAME: ${self:service}-${sls:stage}-processImages
-    EVENT_RULE_NAME_PREFIX: ${self:service}-${sls:stage}-user-schedule-
+    USER_EVENT_RULE_NAME_PREFIX: ${self:service}-${sls:stage}-user-schedule-
+    FILE_WATCHER_EVENT_RULE_NAME_PREFIX: ${self:service}-${sls:stage}-file-watcher-
+    FILE_CHANGE_BASE_URL:
+      Fn::Join:
+      - ''
+      - - 'https://'
+        - !Ref HttpApi
+        - '.execute-api.'
+        - '${aws:region}'
+        - '.amazonaws.com'
   iam:
     role:
       statements:
@@ -41,6 +50,7 @@ provider:
             - "lambda:InvokeFunction"
           Resource:
             - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-processImages
+            - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-fileChangedWatcher
         - Effect: "Allow"
           Action:
             - "events:DescribeRule"
@@ -48,12 +58,14 @@ provider:
             - "events:PutTargets"
           Resource:
             - arn:aws:events:${aws:region}:${aws:accountId}:rule/${self:service}-${sls:stage}-user-schedule-*
+            - arn:aws:events:${aws:region}:${aws:accountId}:rule/${self:service}-${sls:stage}-file-watcher-*
         - Effect: "Allow"
           Action:
             - "lambda:GetPolicy"
             - "lambda:AddPermission"
           Resource:
             - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-dailyMessage
+            - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-fileChangedWatcher
   httpApi:
     authorizers:
       serviceAuthorizer:
@@ -146,11 +158,17 @@ functions:
     timeout: 300
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+    environment:
+      FILE_CHANGED_WATCHER_ARN: !GetAtt FileChangedWatcherLambdaFunction.Arn
+      FILE_CHANGED_WATCHER_NAME: !Ref FileChangedWatcherLambdaFunction
   processImagesHTTP:
     handler: src/images.processHTTP
     timeout: 29
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+    environment:
+      FILE_CHANGED_WATCHER_ARN: !GetAtt FileChangedWatcherLambdaFunction.Arn
+      FILE_CHANGED_WATCHER_NAME: !Ref FileChangedWatcherLambdaFunction
     events:
       - httpApi:
           path: /projects/{groupId}/process
@@ -168,6 +186,18 @@ functions:
           method: get
           authorizer:
             name: serviceAuthorizer
+  fileChangedWatcher:
+    handler: src/changes.watch
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+  fileChangedNotification:
+    handler: src/changes.notify
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+    events:
+      - httpApi:
+          path: /projects/{groupId}/notify
+          method: post
 
 resources:
   Resources:

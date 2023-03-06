@@ -4,6 +4,7 @@ import {
 } from "aws-lambda";
 import { EventBridge, Lambda } from "aws-sdk";
 import { Convert, SetScheduleRequest } from "./dtos/SetScheduleRequest";
+import { dynamoDbClient } from "./dynamoDbClient";
 import { badRequest, internalServerError, notFound, ok } from "./responses";
 
 export async function get(
@@ -13,9 +14,20 @@ export async function get(
   const groupId = event.pathParameters?.groupId;
   if (!groupId) return badRequest("Missing groupId in path");
   if (!claimedSub) return badRequest("Not authorized");
-  if (!process.env.EVENT_RULE_NAME_PREFIX) return internalServerError();
+  if (!process.env.USER_EVENT_RULE_NAME_PREFIX) return internalServerError();
 
-  const ruleName = process.env.EVENT_RULE_NAME_PREFIX + groupId;
+  const dynamoDb = dynamoDbClient();
+  const attributes = await dynamoDb.get({
+    Key: {
+      groupId: groupId,
+      fileId: "!",
+    },
+  });
+
+  const project = attributes.Item;
+  if (!project || project.subject != claimedSub) return notFound();
+
+  const ruleName = process.env.USER_EVENT_RULE_NAME_PREFIX + groupId;
   const eventBridge = new EventBridge();
   const rule = await eventBridge.describeRule({ Name: ruleName }).promise();
 
@@ -39,16 +51,20 @@ export async function set(
   if (!groupId) return badRequest("Missing groupId in path");
   if (!event.body) return badRequest("Missing request body");
   if (!claimedSub) return badRequest("Not authorized");
-  if (!process.env.EVENT_RULE_NAME_PREFIX) return internalServerError();
+  if (!process.env.USER_EVENT_RULE_NAME_PREFIX) return internalServerError();
   if (!process.env.DAILY_MESSAGE_FUNCTION_ARN) return internalServerError();
   if (!process.env.DAILY_MESSAGE_FUNCTION_NAME) return internalServerError();
 
-  console.log(
-    "env:",
-    process.env.EVENT_RULE_NAME_PREFIX,
-    process.env.DAILY_MESSAGE_FUNCTION_ARN,
-    process.env.DAILY_MESSAGE_FUNCTION_NAME
-  );
+  const dynamoDb = dynamoDbClient();
+  const attributes = await dynamoDb.get({
+    Key: {
+      groupId: groupId,
+      fileId: "!",
+    },
+  });
+
+  const project = attributes.Item;
+  if (!project || project.subject != claimedSub) return notFound();
 
   let request: SetScheduleRequest;
   try {
@@ -57,7 +73,7 @@ export async function set(
     return badRequest(e.message);
   }
 
-  const ruleName = process.env.EVENT_RULE_NAME_PREFIX + groupId;
+  const ruleName = process.env.USER_EVENT_RULE_NAME_PREFIX + groupId;
   const statementId = ruleName + "-permission";
   const eventBridge = new EventBridge();
   const rule = await eventBridge

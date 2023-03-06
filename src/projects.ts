@@ -97,7 +97,7 @@ export async function create(
   await lambda
     .invokeAsync({
       FunctionName: process.env.PROCESS_IMAGES_FUNCTION_NAME as string,
-      InvokeArgs: JSON.stringify({ claimedSub, groupId: body.groupId }),
+      InvokeArgs: JSON.stringify({ groupId: body.groupId }),
     })
     .promise();
 
@@ -146,7 +146,6 @@ export async function updateOne(
         .invokeAsync({
           FunctionName: process.env.PROCESS_IMAGES_FUNCTION_NAME as string,
           InvokeArgs: JSON.stringify({
-            claimedSub,
             groupId: body.groupId,
           }),
         })
