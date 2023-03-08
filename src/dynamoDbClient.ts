@@ -80,14 +80,14 @@ export class ProjectTableClient {
 
   async batchWrite(
     params: ProjectTableClient.BatchWriteItemInput
-  ): Promise<BatchWriteCommandOutput[]> {
+  ): Promise<(BatchWriteCommandOutput | undefined)[]> {
     const { RequestItems, ...otherParams } = params;
 
-    let calls: Promise<BatchWriteCommandOutput>[] = [];
+    let calls: Promise<BatchWriteCommandOutput | undefined>[] = [];
     const maxConcurrency = 4;
     for (let i = 0; i < maxConcurrency; i++) {
       const chunkedItems = chunked(RequestItems);
-      const concurrentCalls: Promise<BatchWriteCommandOutput>[] = [];
+      const concurrentCalls: typeof calls = [];
       for (const chunk of chunkedItems) {
         const batchWriteCall = this.retryingBatchWrite({
           RequestItems: chunk,
@@ -103,7 +103,7 @@ export class ProjectTableClient {
 
   private async retryingBatchWrite(
     params: ProjectTableClient.BatchWriteItemInput
-  ): Promise<BatchWriteCommandOutput> {
+  ): Promise<BatchWriteCommandOutput | undefined> {
     const { RequestItems, ...otherParams } = params;
     const docParams = {
       RequestItems: {
@@ -112,14 +112,27 @@ export class ProjectTableClient {
       ...otherParams,
     };
 
-    let result = await this.documentClient.send(
-      new BatchWriteCommand(docParams)
-    );
-    let unprocessed = result.UnprocessedItems;
+    let result: BatchWriteCommandOutput = {
+      UnprocessedItems: docParams.RequestItems,
+      $metadata: {},
+    };
+    try {
+      result = await this.documentClient.send(new BatchWriteCommand(docParams));
+    } catch (e) {
+      if (
+        !(e instanceof Error) ||
+        e.name !== "ProvisionedThroughputExceededException"
+      )
+        throw e;
+    }
     let backoff = 0.5;
-    while (unprocessed && Object.keys(unprocessed).length > 0 && backoff < 64) {
+    while (
+      result.UnprocessedItems &&
+      Object.keys(result.UnprocessedItems).length > 0 &&
+      backoff < 64
+    ) {
       backoff = backoff * 2;
-      const unprocessedCount = Object.values(unprocessed).reduce(
+      const unprocessedCount = Object.values(result.UnprocessedItems).reduce(
         (res, items) => res + items.length,
         0
       );
@@ -128,16 +141,26 @@ export class ProjectTableClient {
         `${unprocessedCount} unprocessed items`
       );
       await sleep((backoff + Math.random()) * 1000);
-      result = await this.documentClient.send(
-        new BatchWriteCommand({
-          RequestItems: unprocessed,
-          ...otherParams,
-        })
-      );
-      unprocessed = result.UnprocessedItems;
+      try {
+        result = await this.documentClient.send(
+          new BatchWriteCommand({
+            RequestItems: result.UnprocessedItems,
+            ...otherParams,
+          })
+        );
+      } catch (e) {
+        if (
+          !(e instanceof Error) ||
+          e.name !== "ProvisionedThroughputExceededException"
+        )
+          throw e;
+      }
     }
 
-    if (unprocessed && Object.keys(unprocessed).length > 0) {
+    if (
+      result.UnprocessedItems &&
+      Object.keys(result.UnprocessedItems).length > 0
+    ) {
       console.warn("Batch write failed");
     }
 

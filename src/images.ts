@@ -94,6 +94,16 @@ export async function process(event: {
     Object.fromEntries(driveFiles.map((file) => [file.id, file]));
   const extraImages = dbImages.filter((image) => !driveFilesMap[image.fileId]);
 
+  const newImages = driveFiles.filter((file) => !dbImagesMap[file.id]);
+  console.log(
+    "Deleting images:",
+    extraImages.map((i) => i.fileId)
+  );
+  console.log(
+    "Adding images:",
+    newImages.map((i) => i.id)
+  );
+
   const dynamoDb = dynamoDbClient();
   await dynamoDb.batchWrite({
     RequestItems: [
