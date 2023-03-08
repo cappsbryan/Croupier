@@ -1,5 +1,25 @@
-import { AWSError, Request } from "aws-sdk";
-import { DocumentClient } from "aws-sdk/clients/dynamodb";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  GetCommandInput,
+  GetCommandOutput,
+  PutCommand,
+  PutCommandInput,
+  PutCommandOutput,
+  UpdateCommand,
+  UpdateCommandInput,
+  UpdateCommandOutput,
+  DeleteCommand,
+  DeleteCommandInput,
+  DeleteCommandOutput,
+  BatchWriteCommand,
+  BatchWriteCommandInput,
+  BatchWriteCommandOutput,
+  QueryCommand,
+  QueryCommandInput,
+  QueryCommandOutput,
+} from "@aws-sdk/lib-dynamodb";
 import { chunked } from "./utils";
 
 type OmitTableName<T> = Omit<T, "TableName">;
@@ -8,70 +28,74 @@ let cachedDynamoDbClient: ProjectTableClient | undefined;
 
 export class ProjectTableClient {
   private tableName: string;
-  private documentClient: DocumentClient;
+  private documentClient: DynamoDBDocumentClient;
 
   constructor(tableName: string) {
     this.tableName = tableName;
-    this.documentClient = new DocumentClient();
+    const client = new DynamoDBClient({});
+    this.documentClient = DynamoDBDocumentClient.from(client, {
+      marshallOptions: { removeUndefinedValues: true },
+    });
   }
 
-  get(
-    params: ProjectTableClient.GetItemInput
-  ): Promise<DocumentClient.GetItemOutput> {
-    return this.documentClient
-      .get({
+  get(params: ProjectTableClient.GetItemInput): Promise<GetCommandOutput> {
+    return this.documentClient.send(
+      new GetCommand({
         ...params,
         TableName: this.tableName,
       })
-      .promise();
+    );
   }
 
-  put(
-    params: ProjectTableClient.PutItemInput
-  ): Promise<DocumentClient.PutItemOutput> {
-    return this.documentClient
-      .put({
+  put(params: ProjectTableClient.PutItemInput): Promise<PutCommandOutput> {
+    return this.documentClient.send(
+      new PutCommand({
         ...params,
         TableName: this.tableName,
       })
-      .promise();
+    );
   }
 
   update(
     params: ProjectTableClient.UpdateItemInput
-  ): Promise<DocumentClient.UpdateItemOutput> {
-    return this.documentClient
-      .update({
+  ): Promise<UpdateCommandOutput> {
+    return this.documentClient.send(
+      new UpdateCommand({
         ...params,
         TableName: this.tableName,
       })
-      .promise();
+    );
   }
 
   delete(
     params: ProjectTableClient.DeleteItemInput
-  ): Promise<DocumentClient.DeleteItemOutput> {
-    return this.documentClient
-      .delete({
+  ): Promise<DeleteCommandOutput> {
+    return this.documentClient.send(
+      new DeleteCommand({
         ...params,
         TableName: this.tableName,
       })
-      .promise();
+    );
   }
 
   async batchWrite(
     params: ProjectTableClient.BatchWriteItemInput
-  ): Promise<DocumentClient.BatchWriteItemOutput[]> {
+  ): Promise<BatchWriteCommandOutput[]> {
     const { RequestItems, ...otherParams } = params;
 
-    let calls: Promise<DocumentClient.BatchWriteItemOutput>[] = [];
-    const chunkedItems = chunked(RequestItems);
-    for (const chunk of chunkedItems) {
-      const batchWriteCall = this.retryingBatchWrite({
-        RequestItems: chunk,
-        ...otherParams,
-      });
-      calls.push(batchWriteCall);
+    let calls: Promise<BatchWriteCommandOutput>[] = [];
+    const maxConcurrency = 4;
+    for (let i = 0; i < maxConcurrency; i++) {
+      const chunkedItems = chunked(RequestItems);
+      const concurrentCalls: Promise<BatchWriteCommandOutput>[] = [];
+      for (const chunk of chunkedItems) {
+        const batchWriteCall = this.retryingBatchWrite({
+          RequestItems: chunk,
+          ...otherParams,
+        });
+        concurrentCalls.push(batchWriteCall);
+      }
+      calls.concat(concurrentCalls);
     }
 
     return await Promise.all(calls);
@@ -79,7 +103,7 @@ export class ProjectTableClient {
 
   private async retryingBatchWrite(
     params: ProjectTableClient.BatchWriteItemInput
-  ): Promise<DocumentClient.BatchWriteItemOutput> {
+  ): Promise<BatchWriteCommandOutput> {
     const { RequestItems, ...otherParams } = params;
     const docParams = {
       RequestItems: {
@@ -88,7 +112,9 @@ export class ProjectTableClient {
       ...otherParams,
     };
 
-    let result = await this.documentClient.batchWrite(docParams).promise();
+    let result = await this.documentClient.send(
+      new BatchWriteCommand(docParams)
+    );
     let unprocessed = result.UnprocessedItems;
     let backoff = 0.5;
     while (unprocessed && Object.keys(unprocessed).length > 0 && backoff < 64) {
@@ -102,12 +128,12 @@ export class ProjectTableClient {
         `${unprocessedCount} unprocessed items`
       );
       await sleep((backoff + Math.random()) * 1000);
-      result = await this.documentClient
-        .batchWrite({
+      result = await this.documentClient.send(
+        new BatchWriteCommand({
           RequestItems: unprocessed,
           ...otherParams,
         })
-        .promise();
+      );
       unprocessed = result.UnprocessedItems;
     }
 
@@ -118,15 +144,13 @@ export class ProjectTableClient {
     return result;
   }
 
-  query(
-    params: ProjectTableClient.QueryInput
-  ): Promise<DocumentClient.QueryOutput> {
-    return this.documentClient
-      .query({
+  query(params: ProjectTableClient.QueryInput): Promise<QueryCommandOutput> {
+    return this.documentClient.send(
+      new QueryCommand({
         ...params,
         TableName: this.tableName,
       })
-      .promise();
+    );
   }
 
   async fullQuery(
@@ -162,24 +186,25 @@ export class ProjectTableClient {
 }
 
 export namespace ProjectTableClient {
-  export type GetItemInput = OmitTableName<DocumentClient.GetItemInput>;
-  export type PutItemInput = OmitTableName<DocumentClient.PutItemInput>;
-  export type UpdateItemInput = OmitTableName<DocumentClient.UpdateItemInput>;
-  export type DeleteItemInput = OmitTableName<DocumentClient.DeleteItemInput>;
+  export type GetItemInput = OmitTableName<GetCommandInput>;
+  export type PutItemInput = OmitTableName<PutCommandInput>;
+  export type UpdateItemInput = OmitTableName<UpdateCommandInput>;
+  export type DeleteItemInput = OmitTableName<DeleteCommandInput>;
   export type BatchWriteItemInput = Omit<
-    DocumentClient.BatchWriteItemInput,
+    BatchWriteCommandInput,
     "RequestItems"
-  > & { RequestItems: DocumentClient.WriteRequests };
-  export type QueryInput = OmitTableName<DocumentClient.QueryInput>;
-  export type FullQueryOutput = Omit<
-    DocumentClient.QueryOutput,
-    "ConsumedCapacity"
-  >;
+  > & {
+    RequestItems: NonNullable<BatchWriteCommandInput["RequestItems"]>[string];
+  };
+  export type QueryInput = OmitTableName<QueryCommandInput>;
+  export type FullQueryOutput = Omit<QueryCommandOutput, "ConsumedCapacity">;
 }
 
 export function dynamoDbClient(): ProjectTableClient {
   if (cachedDynamoDbClient) return cachedDynamoDbClient;
-  return new ProjectTableClient(process.env.DYNAMODB_PROJECT_TABLE as string);
+  return new ProjectTableClient(
+    process.env["DYNAMODB_PROJECT_TABLE"] as string
+  );
 }
 
 function sleep(ms: number): Promise<void> {

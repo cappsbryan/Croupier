@@ -1,8 +1,19 @@
-import {
+import type {
   APIGatewayProxyEventV2WithJWTAuthorizer,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import { EventBridge, Lambda } from "aws-sdk";
+import {
+  EventBridge,
+  DescribeRuleCommand,
+  PutRuleCommand,
+  PutTargetsCommand,
+} from "@aws-sdk/client-eventbridge";
+import {
+  Lambda,
+  AddPermissionCommand,
+  GetPolicyCommand,
+} from "@aws-sdk/client-lambda";
+
 import { Convert, SetScheduleRequest } from "./dtos/SetScheduleRequest";
 import { dynamoDbClient } from "./dynamoDbClient";
 import { badRequest, internalServerError, notFound, ok } from "./responses";
@@ -10,11 +21,12 @@ import { badRequest, internalServerError, notFound, ok } from "./responses";
 export async function get(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  const groupId = event.pathParameters?.groupId;
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
+  const groupId = event.pathParameters?.["groupId"];
+  const userEventRuleNamePrefix = process.env["USER_EVENT_RULE_NAME_PREFIX"];
   if (!groupId) return badRequest("Missing groupId in path");
   if (!claimedSub) return badRequest("Not authorized");
-  if (!process.env.USER_EVENT_RULE_NAME_PREFIX) return internalServerError();
+  if (!userEventRuleNamePrefix) return internalServerError();
 
   const dynamoDb = dynamoDbClient();
   const attributes = await dynamoDb.get({
@@ -25,17 +37,19 @@ export async function get(
   });
 
   const project = attributes.Item;
-  if (!project || project.subject != claimedSub) return notFound();
+  if (!project || project["subject"] != claimedSub) return notFound();
 
-  const ruleName = process.env.USER_EVENT_RULE_NAME_PREFIX + groupId;
-  const eventBridge = new EventBridge();
-  const rule = await eventBridge.describeRule({ Name: ruleName }).promise();
+  const ruleName = userEventRuleNamePrefix + groupId;
+  const eventBridge = new EventBridge({});
+  const rule = await eventBridge.send(
+    new DescribeRuleCommand({ Name: ruleName })
+  );
 
   if (rule) {
     const schedule = rule.ScheduleExpression;
     if (!schedule || !schedule.startsWith("cron("))
       return internalServerError("Malformed schedule");
-    const [minute, hour, ...rest] = schedule
+    const [minute, hour] = schedule
       .substring(5, schedule.length - 1)
       .split(" ");
     return ok({ hour, minute });
@@ -46,14 +60,17 @@ export async function get(
 export async function set(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  const groupId = event.pathParameters?.groupId;
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
+  const groupId = event.pathParameters?.["groupId"];
+  const userEventRuleNamePrefix = process.env["USER_EVENT_RULE_NAME_PREFIX"];
+  const dailyMessageFunctionArn = process.env["DAILY_MESSAGE_FUNCTION_ARN"];
+  const dailyMessageFunctionName = process.env["DAILY_MESSAGE_FUNCTION_NAME"];
   if (!groupId) return badRequest("Missing groupId in path");
   if (!event.body) return badRequest("Missing request body");
   if (!claimedSub) return badRequest("Not authorized");
-  if (!process.env.USER_EVENT_RULE_NAME_PREFIX) return internalServerError();
-  if (!process.env.DAILY_MESSAGE_FUNCTION_ARN) return internalServerError();
-  if (!process.env.DAILY_MESSAGE_FUNCTION_NAME) return internalServerError();
+  if (!userEventRuleNamePrefix) return internalServerError();
+  if (!dailyMessageFunctionArn) return internalServerError();
+  if (!dailyMessageFunctionName) return internalServerError();
 
   const dynamoDb = dynamoDbClient();
   const attributes = await dynamoDb.get({
@@ -64,55 +81,58 @@ export async function set(
   });
 
   const project = attributes.Item;
-  if (!project || project.subject != claimedSub) return notFound();
+  if (!project || project["subject"] != claimedSub) return notFound();
 
   let request: SetScheduleRequest;
   try {
     request = Convert.toSetScheduleRequest(event.body);
   } catch (e) {
-    return badRequest(e.message);
+    if (e instanceof Error) return badRequest(e.message);
+    else return badRequest();
   }
 
-  const ruleName = process.env.USER_EVENT_RULE_NAME_PREFIX + groupId;
+  const ruleName = userEventRuleNamePrefix + groupId;
   const statementId = ruleName + "-permission";
-  const eventBridge = new EventBridge();
-  const rule = await eventBridge
-    .putRule({
+  const eventBridge = new EventBridge({});
+  const rule = await eventBridge.send(
+    new PutRuleCommand({
       Name: ruleName,
       ScheduleExpression: `cron(${request.minute} ${request.hour} * * ? *)`,
     })
-    .promise();
-  await eventBridge
-    .putTargets({
+  );
+  await eventBridge.send(
+    new PutTargetsCommand({
       Rule: ruleName,
       Targets: [
         {
           Id: "dailyMessage",
-          Arn: process.env.DAILY_MESSAGE_FUNCTION_ARN,
+          Arn: dailyMessageFunctionArn,
           Input: JSON.stringify({ groupId: groupId }),
         },
       ],
     })
-    .promise();
+  );
 
-  const lambda = new Lambda();
-  const policyResponse = await lambda
-    .getPolicy({ FunctionName: process.env.DAILY_MESSAGE_FUNCTION_NAME })
-    .promise();
+  const lambda = new Lambda({});
+  const policyResponse = await lambda.send(
+    new GetPolicyCommand({
+      FunctionName: dailyMessageFunctionName,
+    })
+  );
   const policy: { Statement: [{ Sid: string }] } = policyResponse.Policy
     ? JSON.parse(policyResponse.Policy)
     : undefined;
 
   if (!policy.Statement.find((statement) => statement.Sid === statementId)) {
-    await lambda
-      .addPermission({
-        FunctionName: process.env.DAILY_MESSAGE_FUNCTION_NAME,
+    await lambda.send(
+      new AddPermissionCommand({
+        FunctionName: dailyMessageFunctionName,
         StatementId: statementId,
         Action: "lambda:InvokeFunction",
         Principal: "events.amazonaws.com",
         SourceArn: rule.RuleArn,
       })
-      .promise();
+    );
   }
 
   return ok({

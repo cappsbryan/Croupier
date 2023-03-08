@@ -1,14 +1,28 @@
 service: croupier
 frameworkVersion: "3"
 
+package:
+  individually: true
+
 # plugin order matters
 plugins:
-  - serverless-plugin-typescript
+  - serverless-webpack
   - serverless-offline
+
+custom:
+  webpack:
+    includeModules:
+      forceExclude:
+        - "@aws-sdk/client-api-gateway"
+        - "@aws-sdk/client-dynamodb"
+        - "@aws-sdk/client-eventbridge"
+        - "@aws-sdk/client-lambda"
+        - "@aws-sdk/lib-dynamodb"
 
 provider:
   name: aws
   runtime: nodejs18.x
+  architecture: arm64
   environment:
     DYNAMODB_PROJECT_TABLE: ${self:service}-projectTable-${sls:stage}
     PROCESS_IMAGES_FUNCTION_NAME: ${self:service}-${sls:stage}-processImages
@@ -125,7 +139,7 @@ functions:
   receiveMessage:
     handler: src/message.receiveMessage
     layers:
-      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     events:
       - httpApi:
           path: /message
@@ -133,7 +147,7 @@ functions:
   dailyMessage:
     handler: src/message.dailyMessage
     layers:
-      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
   setSchedule:
     handler: src/schedule.set
     environment:
@@ -157,7 +171,7 @@ functions:
     handler: src/images.process
     timeout: 300
     layers:
-      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     environment:
       FILE_CHANGED_WATCHER_ARN: !GetAtt FileChangedWatcherLambdaFunction.Arn
       FILE_CHANGED_WATCHER_NAME: !Ref FileChangedWatcherLambdaFunction
@@ -165,7 +179,7 @@ functions:
     handler: src/images.processHTTP
     timeout: 29
     layers:
-      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     environment:
       FILE_CHANGED_WATCHER_ARN: !GetAtt FileChangedWatcherLambdaFunction.Arn
       FILE_CHANGED_WATCHER_NAME: !Ref FileChangedWatcherLambdaFunction
@@ -179,7 +193,7 @@ functions:
     handler: src/images.checkProcess
     timeout: 29
     layers:
-      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     events:
       - httpApi:
           path: /projects/{groupId}/process
@@ -189,11 +203,11 @@ functions:
   fileChangedWatcher:
     handler: src/changes.watch
     layers:
-      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
   fileChangedNotification:
     handler: src/changes.notify
     layers:
-      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:2
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     events:
       - httpApi:
           path: /projects/{groupId}/notify
@@ -212,8 +226,8 @@ resources:
           - AttributeName: subject
             AttributeType: S
         ProvisionedThroughput:
-          ReadCapacityUnits: 1
-          WriteCapacityUnits: 1
+          ReadCapacityUnits: 4
+          WriteCapacityUnits: 4
         KeySchema:
           - AttributeName: groupId
             KeyType: HASH
@@ -234,8 +248,8 @@ resources:
                 - replacements
                 - emojis
             ProvisionedThroughput:
-              ReadCapacityUnits: 1
-              WriteCapacityUnits: 1
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 2
         TableName: ${self:service}-projectTable-${sls:stage}
     serviceUserPool:
       Type: AWS::Cognito::UserPool

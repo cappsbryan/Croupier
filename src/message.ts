@@ -1,16 +1,16 @@
-import {
+import type {
   APIGatewayProxyEventV2WithJWTAuthorizer,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 
 import { Readable } from "stream";
-import { ReadableStream } from "stream/web";
-import { driveClient } from "./driveClient";
+import type { ReadableStream } from "stream/web";
 
+import { driveClient } from "./driveClient";
 import { Convert, GroupMeCallback } from "./dtos/GroupMeCallback";
 import { dynamoDbClient } from "./dynamoDbClient";
-import { Image } from "./models/Image";
-import { Project } from "./models/Project";
+import type { Image } from "./models/Image";
+import type { Project } from "./models/Project";
 import { badRequest, internalServerError, ok } from "./responses";
 import { groupmeAccessToken } from "./secrets";
 
@@ -58,7 +58,8 @@ export async function receiveMessage(
   try {
     groupMeCallback = Convert.toGroupMeCallback(event.body);
   } catch (e) {
-    return badRequest(e.message);
+    if (e instanceof Error) return badRequest(e.message);
+    else return internalServerError("Error parsing request body");
   }
 
   const project = await getProject(groupMeCallback.group_id);
@@ -131,8 +132,7 @@ async function getProject(
 
 function isFirstWord(full: string, word: string): boolean {
   const words = full.split(" ");
-  if (words.length < 1) return false;
-  return words[0].toLowerCase() == word;
+  return words[0]?.toLowerCase() === word;
 }
 
 function extractSearch(full: string, keyword: string): string | undefined {
@@ -207,8 +207,11 @@ function selectImage<Img extends Pick<Image, "posted">>(
     }
   });
 
-  const randomIndex = Math.floor(Math.random() * weightedIndices.length);
-  return images[weightedIndices[randomIndex]];
+  const randomWeightedIndex = Math.floor(
+    Math.random() * weightedIndices.length
+  );
+  const randomIndex = weightedIndices[randomWeightedIndex];
+  return randomIndex ? images[randomIndex] : undefined;
 }
 
 async function downloadImage(
@@ -248,8 +251,10 @@ async function uploadImage(
     "https://image.groupme.com/pictures",
     info
   );
-  const uploadResponseBody = await uploadResponse.json();
-  const imageUrl: string | undefined = uploadResponseBody?.payload?.url;
+  const uploadResponseBody = (await uploadResponse.json()) as {
+    payload: { url: string | undefined } | undefined;
+  };
+  const imageUrl = uploadResponseBody?.payload?.url;
   if (!imageUrl) {
     console.warn("upload response:", uploadResponseBody);
     console.warn("upload response headers:");

@@ -1,48 +1,45 @@
-import {
+import type {
   APIGatewayProxyEventV2WithJWTAuthorizer,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import { AttributeMap, BatchWriteItemOutput } from "aws-sdk/clients/dynamodb";
+import { Lambda } from "@aws-sdk/client-lambda";
 
-import { chunked } from "./utils";
-import { Image } from "./models/Image";
-import { Project } from "./models/Project";
+import type { Image } from "./models/Image";
+import type { Project } from "./models/Project";
 import { badRequest, created, noContent, notFound, ok } from "./responses";
 import { Convert, CreateProjectRequest } from "./dtos/CreateProjectRequest";
-import { dynamoDbClient, ProjectTableClient } from "./dynamoDbClient";
-import { Lambda } from "aws-sdk";
+import { dynamoDbClient } from "./dynamoDbClient";
 
-function projectResponse(project: AttributeMap | CreateProjectRequest) {
-  const res = project as any;
-  const { fileId, subject, ...response } = res;
+function projectResponse(project: Record<string, any>) {
+  const { fileId, subject, ...response } = project;
   return response;
 }
 
 export async function getOne(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  if (event.pathParameters?.groupId === undefined)
-    return badRequest("Missing id in path");
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
+  const groupId = event.pathParameters?.["groupId"];
+  if (!groupId) return badRequest("Missing id in path");
   if (!claimedSub) return badRequest("Not authorized");
 
   const dynamoDb = dynamoDbClient();
   const attributes = await dynamoDb.get({
     Key: {
-      groupId: event.pathParameters.groupId,
+      groupId: groupId,
       fileId: "!",
     },
   });
 
   const item = attributes.Item;
-  if (!item || item.subject != claimedSub) return notFound();
+  if (!item || item["subject"] != claimedSub) return notFound();
   return ok(projectResponse(item));
 }
 
 export async function getMine(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
   if (!claimedSub) return badRequest("Not authorized");
 
   const dynamoDb = dynamoDbClient();
@@ -62,7 +59,7 @@ export async function getMine(
 export async function create(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
   if (!event.body) return badRequest("Missing request body");
   if (!claimedSub) return badRequest("Not authorized");
 
@@ -93,13 +90,12 @@ export async function create(
     }
   }
 
-  const lambda = new Lambda();
-  await lambda
-    .invokeAsync({
-      FunctionName: process.env.PROCESS_IMAGES_FUNCTION_NAME as string,
-      InvokeArgs: JSON.stringify({ groupId: body.groupId }),
-    })
-    .promise();
+  const lambda = new Lambda({});
+  await lambda.invoke({
+    FunctionName: process.env["PROCESS_IMAGES_FUNCTION_NAME"] as string,
+    InvocationType: "Event",
+    Payload: Buffer.from(JSON.stringify({ groupId: body.groupId })),
+  });
 
   return created(body, "/projects/" + body.groupId);
 }
@@ -107,8 +103,8 @@ export async function create(
 export async function updateOne(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  if (event.pathParameters?.groupId === undefined)
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
+  if (event.pathParameters?.["groupId"] === undefined)
     return badRequest("Missing id in path");
   if (!claimedSub || typeof claimedSub !== "string")
     return badRequest("Not authorized");
@@ -122,7 +118,7 @@ export async function updateOne(
     else throw e;
   }
 
-  if (event.pathParameters?.groupId !== body.groupId)
+  if (event.pathParameters?.["groupId"] !== body.groupId)
     return badRequest("groupId doesn't match url path");
 
   const dynamoDb = dynamoDbClient();
@@ -140,16 +136,17 @@ export async function updateOne(
       },
       ReturnValues: "ALL_OLD",
     });
-    if (result.Attributes?.folderId !== body.folderId) {
-      const lambda = new Lambda();
-      await lambda
-        .invokeAsync({
-          FunctionName: process.env.PROCESS_IMAGES_FUNCTION_NAME as string,
-          InvokeArgs: JSON.stringify({
+    if (result.Attributes?.["folderId"] !== body.folderId) {
+      const lambda = new Lambda({});
+      await lambda.invoke({
+        FunctionName: process.env["PROCESS_IMAGES_FUNCTION_NAME"] as string,
+        InvocationType: "Event",
+        Payload: Buffer.from(
+          JSON.stringify({
             groupId: body.groupId,
-          }),
-        })
-        .promise();
+          })
+        ),
+      });
     }
   } catch (e: unknown) {
     if (e instanceof Error && e.name === "ConditionalCheckFailedException") {
@@ -165,21 +162,22 @@ export async function updateOne(
 export async function deleteOne(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  if (event.pathParameters?.groupId === undefined)
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
+  if (event.pathParameters?.["groupId"] === undefined)
     return badRequest("Missing id in path");
   if (!claimedSub) return badRequest("Not authorized");
 
-  const groupId = event.pathParameters?.groupId;
+  const groupId = event.pathParameters?.["groupId"];
   const dynamoDb = dynamoDbClient();
   let queryResult = await dynamoDb.fullQuery({
     KeyConditionExpression: "groupId = :g",
     ExpressionAttributeValues: { ":g": groupId },
   });
   const items = queryResult.Items as (Project | Image)[] | undefined;
-  if (!items || items.length === 0) return notFound();
+  if (!items) return notFound();
 
   const project = items[0];
+  if (!project) return notFound();
   if ("subject" in project && project.subject !== claimedSub) return notFound();
 
   await dynamoDb.batchWrite({

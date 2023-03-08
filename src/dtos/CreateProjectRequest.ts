@@ -196,10 +196,6 @@ function a(typ: any) {
   return { arrayItems: typ };
 }
 
-function u(...typs: any[]) {
-  return { unionMembers: typs };
-}
-
 function o(props: any[], additional: any) {
   return { props, additional };
 }

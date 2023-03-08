@@ -1,21 +1,31 @@
 import {
+  AddPermissionCommand,
+  GetPolicyCommand,
+  InvokeCommand,
+  LambdaClient,
+} from "@aws-sdk/client-lambda";
+import {
+  EventBridgeClient,
+  PutRuleCommand,
+  PutTargetsCommand,
+} from "@aws-sdk/client-eventbridge";
+import type { drive_v3 } from "@googleapis/drive";
+import type {
   APIGatewayProxyEventV2WithJWTAuthorizer,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import { drive_v3 } from "googleapis";
 
 import { driveClient } from "./driveClient";
 import { dynamoDbClient } from "./dynamoDbClient";
-import { Image } from "./models/Image";
-import { Project } from "./models/Project";
+import type { Image } from "./models/Image";
+import type { Project } from "./models/Project";
 import { badRequest, internalServerError, notFound, ok } from "./responses";
-import { EventBridge, Lambda } from "aws-sdk";
 
 export async function checkProcess(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  const groupId = event.pathParameters?.groupId;
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
+  const groupId = event.pathParameters?.["groupId"];
   if (!groupId) return badRequest("Missing id in path");
   if (!claimedSub) return badRequest("Not authorized");
 
@@ -40,8 +50,8 @@ export async function checkProcess(
 export async function processHTTP(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  const claimedSub = event.requestContext.authorizer.jwt.claims.sub;
-  const groupId = event.pathParameters?.groupId;
+  const claimedSub = event.requestContext.authorizer.jwt.claims["sub"];
+  const groupId = event.pathParameters?.["groupId"];
 
   const dynamoDb = dynamoDbClient();
   const attributes = await dynamoDb.get({
@@ -52,7 +62,7 @@ export async function processHTTP(
   });
 
   const project = attributes.Item;
-  if (!project || project.subject != claimedSub) return notFound();
+  if (!project || project["subject"] != claimedSub) return notFound();
 
   return process({ groupId });
 }
@@ -211,48 +221,54 @@ async function projectAndImages(
 }
 
 async function setupRecurringFolderWatch(project: QueryProjectResult) {
-  if (!global.process.env.FILE_CHANGED_WATCHER_ARN) {
+  const fileChangedWatcherArn = global.process.env["FILE_CHANGED_WATCHER_ARN"];
+  if (!fileChangedWatcherArn) {
     console.error("FILE_CHANGED_WATCHER_ARN not set");
     return;
   }
-  if (!global.process.env.FILE_CHANGED_WATCHER_NAME) {
+  const fileChangedWatcherName =
+    global.process.env["FILE_CHANGED_WATCHER_NAME"];
+  if (!fileChangedWatcherName) {
     console.error("FILE_CHANGED_WATCHER_NAME not set");
     return;
   }
-  if (!global.process.env.FILE_WATCHER_EVENT_RULE_NAME_PREFIX) {
+  const fileWatcherEventRuleNamePrefix =
+    global.process.env["FILE_WATCHER_EVENT_RULE_NAME_PREFIX"];
+  if (!fileWatcherEventRuleNamePrefix) {
     console.error("FILE_WATCHER_EVENT_RULE_NAME_PREFIX not set");
     return;
   }
 
-  const ruleName =
-    global.process.env.FILE_WATCHER_EVENT_RULE_NAME_PREFIX + project.groupId;
+  const ruleName = fileWatcherEventRuleNamePrefix + project.groupId;
   const statementId = ruleName + "-permission";
-  const eventBridge = new EventBridge();
-  const rule = await eventBridge
-    .putRule({
+  const eventBridge = new EventBridgeClient({});
+  const rule = await eventBridge.send(
+    new PutRuleCommand({
       Name: ruleName,
       ScheduleExpression: `rate(23 hours)`,
     })
-    .promise();
-  await eventBridge
-    .putTargets({
+  );
+  await eventBridge.send(
+    new PutTargetsCommand({
       Rule: ruleName,
       Targets: [
         {
           Id: "fileChangedWatcher",
-          Arn: global.process.env.FILE_CHANGED_WATCHER_ARN,
+          Arn: fileChangedWatcherArn,
           Input: JSON.stringify(project),
         },
       ],
     })
-    .promise();
+  );
 
-  const lambda = new Lambda();
+  const lambda = new LambdaClient({});
   let statements: { Sid: string }[];
   try {
-    const policyResponse = await lambda
-      .getPolicy({ FunctionName: global.process.env.FILE_CHANGED_WATCHER_NAME })
-      .promise();
+    const policyResponse = await lambda.send(
+      new GetPolicyCommand({
+        FunctionName: fileChangedWatcherName,
+      })
+    );
     const policy: { Statement: [{ Sid: string }] } = policyResponse.Policy
       ? JSON.parse(policyResponse.Policy)
       : undefined;
@@ -262,21 +278,22 @@ async function setupRecurringFolderWatch(project: QueryProjectResult) {
   }
 
   if (!statements.find((statement) => statement.Sid === statementId)) {
-    await lambda
-      .addPermission({
-        FunctionName: global.process.env.FILE_CHANGED_WATCHER_NAME,
+    await lambda.send(
+      new AddPermissionCommand({
+        FunctionName: fileChangedWatcherName,
         StatementId: statementId,
         Action: "lambda:InvokeFunction",
         Principal: "events.amazonaws.com",
         SourceArn: rule.RuleArn,
       })
-      .promise();
+    );
   }
 
-  await lambda
-    .invokeAsync({
-      FunctionName: global.process.env.FILE_CHANGED_WATCHER_NAME,
-      InvokeArgs: JSON.stringify(project),
+  await lambda.send(
+    new InvokeCommand({
+      FunctionName: fileChangedWatcherName,
+      InvocationType: "Event",
+      Payload: Buffer.from(JSON.stringify(project)),
     })
-    .promise();
+  );
 }

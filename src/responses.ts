@@ -1,4 +1,4 @@
-import { APIGatewayProxyResult } from "aws-lambda";
+import type { APIGatewayProxyResult } from "aws-lambda";
 
 export function ok(item: any, location?: string): APIGatewayProxyResult {
   return {

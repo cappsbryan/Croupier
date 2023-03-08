@@ -1,15 +1,15 @@
 import { randomBytes, randomUUID } from "crypto";
 import { promisify } from "util";
 
-import {
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import type {
   APIGatewayProxyEventV2WithJWTAuthorizer,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import { Lambda } from "aws-sdk";
 
 import { driveClient } from "./driveClient";
 import { internalServerError, ok } from "./responses";
-import { Project } from "./models/Project";
+import type { Project } from "./models/Project";
 import { dynamoDbClient } from "./dynamoDbClient";
 
 const randomBytesAsync = promisify(randomBytes);
@@ -17,8 +17,8 @@ const randomBytesAsync = promisify(randomBytes);
 export async function watch(
   project: Pick<Project, "groupId" | "fileId" | "folderId">
 ): Promise<void> {
-  if (!global.process.env.FILE_CHANGE_BASE_URL) return;
-  const baseUrl = global.process.env.FILE_CHANGE_BASE_URL;
+  if (!global.process.env["FILE_CHANGE_BASE_URL"]) return;
+  const baseUrl = global.process.env["FILE_CHANGE_BASE_URL"];
 
   const folderChannelId = randomUUID();
   const drive = await driveClient();
@@ -58,9 +58,11 @@ export async function watch(
 export async function notify(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  if (!process.env.PROCESS_IMAGES_FUNCTION_NAME) return internalServerError();
-  if (!event.pathParameters?.groupId) return internalServerError();
-  const groupId = event.pathParameters.groupId;
+  if (!process.env["PROCESS_IMAGES_FUNCTION_NAME"])
+    return internalServerError();
+  if (!event.pathParameters?.["groupId"]) return internalServerError();
+  const processImagesFunctionName = process.env["PROCESS_IMAGES_FUNCTION_NAME"];
+  const groupId = event.pathParameters["groupId"];
 
   const dynamoDb = dynamoDbClient();
   const projectResponse = await dynamoDb.get({
@@ -78,11 +80,14 @@ export async function notify(
   if (event.headers["x-goog-channel-token"] !== project?.folderChannelToken)
     return ok("Ignoring because the token doesn't match");
 
-  const lambda = new Lambda();
-  lambda.invokeAsync({
-    FunctionName: process.env.PROCESS_IMAGES_FUNCTION_NAME,
-    InvokeArgs: { groupId: groupId },
-  });
+  const lambda = new LambdaClient({});
+  lambda.send(
+    new InvokeCommand({
+      FunctionName: processImagesFunctionName,
+      InvocationType: "Event",
+      Payload: Buffer.from(JSON.stringify({ groupId: groupId })),
+    })
+  );
 
   return ok(event.body);
 }

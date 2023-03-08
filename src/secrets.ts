@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 
-const awsSessionToken = process.env.AWS_SESSION_TOKEN as string;
+const awsSessionToken = process.env["AWS_SESSION_TOKEN"] as string;
 
 export function googleServiceAccountKey(): Promise<string> {
   return getParameter("croupier-google-service-account-key");
@@ -11,7 +11,7 @@ export function groupmeAccessToken(): Promise<string> {
 }
 
 async function getParameter(name: string): Promise<string> {
-  if (process.env.IS_OFFLINE) {
+  if (process.env["IS_OFFLINE"]) {
     // Note: __dirname resolves to the .build/src folder
     return await readFile(__dirname + "/../../offline_secrets/" + name, "utf8");
   }
@@ -22,6 +22,6 @@ async function getParameter(name: string): Promise<string> {
   const response = await fetch(paramUrl, {
     headers: { "X-Aws-Parameters-Secrets-Token": awsSessionToken },
   });
-  const json = await response.json();
+  const json = (await response.json()) as { Parameter: { Value: string } };
   return json.Parameter.Value;
 }
