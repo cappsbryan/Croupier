@@ -68,6 +68,13 @@ export async function receiveMessage(
       `Failed to retrieve project associated with group: ${groupMeCallback.group_id}`
     );
 
+  if (groupMeCallback.sender_type === "bot") {
+    return ok({
+      groupId: groupMeCallback.group_id,
+      message: `Ignored message from bot: ${groupMeCallback.name}`,
+    });
+  }
+
   if (!isFirstWord(groupMeCallback.text, project.keyword)) {
     return ok({
       groupId: groupMeCallback.group_id,
@@ -80,11 +87,13 @@ export async function receiveMessage(
   const eligibleImages = await searchForImages(search, project);
   console.info("found %d eligible images", eligibleImages.length);
   const image = selectImage(eligibleImages);
-  if (!image)
+  if (!image) {
+    console.warn("not posting, no image found");
     return ok({
       groupId: groupMeCallback.group_id,
       image: null,
     });
+  }
   console.info("posting file id:", image.fileId);
 
   let uri = image.uri;
@@ -193,7 +202,6 @@ function filterBasedOnSearch(
 function selectImage<Img extends Pick<Image, "posted">>(
   images: Img[]
 ): Img | undefined {
-  // TODO: Add some randomness to which eligible image is picked
   if (images.length <= 0) return;
 
   const weightedIndices = images.flatMap((image, index): number[] => {
