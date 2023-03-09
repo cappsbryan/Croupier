@@ -8,6 +8,9 @@ jspm_packages
 # TypeScript build dir
 .build
 
+# Webpack build dir
+.webpack
+
 # Secrets
 offline_secrets/
 

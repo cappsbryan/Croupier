@@ -202,12 +202,12 @@ function filterBasedOnSearch(
 function selectImage<Img extends Pick<Image, "posted">>(
   images: Img[]
 ): Img | undefined {
-  if (images.length <= 0) return;
+  if (images.length <= 0) return undefined;
 
   const weightedIndices = images.flatMap((image, index): number[] => {
     if (image.posted) {
       const delta = Date.now() - image.posted;
-      const days = Math.max(60, delta / 86_400_000);
+      const days = Math.min(60, delta / 86_400_000);
       const count = Math.ceil(days ** 2 / 35);
       return Array(count).fill(index);
     } else {
@@ -219,7 +219,11 @@ function selectImage<Img extends Pick<Image, "posted">>(
     Math.random() * weightedIndices.length
   );
   const randomIndex = weightedIndices[randomWeightedIndex];
-  return randomIndex ? images[randomIndex] : undefined;
+  if (randomIndex === undefined) {
+    console.error("Failed to get a random image index???");
+    return undefined;
+  }
+  return images[randomIndex];
 }
 
 async function downloadImage(
