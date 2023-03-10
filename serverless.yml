@@ -6,18 +6,8 @@ package:
 
 # plugin order matters
 plugins:
-  - serverless-webpack
+  - serverless-esbuild
   - serverless-offline
-
-custom:
-  webpack:
-    includeModules:
-      forceExclude:
-        - "@aws-sdk/client-api-gateway"
-        - "@aws-sdk/client-dynamodb"
-        - "@aws-sdk/client-eventbridge"
-        - "@aws-sdk/client-lambda"
-        - "@aws-sdk/lib-dynamodb"
 
 provider:
   name: aws
