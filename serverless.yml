@@ -9,6 +9,10 @@ plugins:
   - serverless-esbuild
   - serverless-offline
 
+custom:
+  serverless-offline:
+    noAuth: true
+
 provider:
   name: aws
   runtime: nodejs18.x
@@ -86,7 +90,7 @@ provider:
 
 functions:
   getOneProject:
-    handler: src/projects.getOne
+    handler: src/handlers/projects.getOne
     events:
       - httpApi:
           path: /projects/{groupId}
@@ -94,7 +98,7 @@ functions:
           authorizer:
             name: serviceAuthorizer
   getProjects:
-    handler: src/projects.getMine
+    handler: src/handlers/projects.getMine
     events:
       - httpApi:
           path: /projects
@@ -102,7 +106,10 @@ functions:
           authorizer:
             name: serviceAuthorizer
   createProject:
-    handler: src/projects.create
+    handler: src/handlers/projects.create
+    timeout: 10
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     events:
       - httpApi:
           path: /projects
@@ -110,7 +117,10 @@ functions:
           authorizer:
             name: serviceAuthorizer
   updateOneProject:
-    handler: src/projects.updateOne
+    handler: src/handlers/projects.updateOne
+    timeout: 10
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     events:
       - httpApi:
           path: /projects/{groupId}
@@ -118,7 +128,7 @@ functions:
           authorizer:
             name: serviceAuthorizer
   deleteOneProject:
-    handler: src/projects.deleteOne
+    handler: src/handlers/projects.deleteOne
     timeout: 29
     events:
       - httpApi:
@@ -127,7 +137,7 @@ functions:
           authorizer:
             name: serviceAuthorizer
   receiveMessage:
-    handler: src/message.receiveMessage
+    handler: src/handlers/message.receiveMessage
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     events:
@@ -135,11 +145,11 @@ functions:
           path: /message
           method: post
   dailyMessage:
-    handler: src/message.dailyMessage
+    handler: src/handlers/message.dailyMessage
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
   setSchedule:
-    handler: src/schedule.set
+    handler: src/handlers/schedule.set
     environment:
       DAILY_MESSAGE_FUNCTION_ARN: !GetAtt DailyMessageLambdaFunction.Arn
       DAILY_MESSAGE_FUNCTION_NAME: !Ref DailyMessageLambdaFunction
@@ -150,7 +160,7 @@ functions:
           authorizer:
             name: serviceAuthorizer
   getSchedule:
-    handler: src/schedule.get
+    handler: src/handlers/schedule.get
     events:
       - httpApi:
           path: /projects/{groupId}/schedule
@@ -158,7 +168,7 @@ functions:
           authorizer:
             name: serviceAuthorizer
   processImages:
-    handler: src/images.process
+    handler: src/handlers/images.process
     timeout: 300
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
@@ -166,7 +176,7 @@ functions:
       FILE_CHANGED_WATCHER_ARN: !GetAtt FileChangedWatcherLambdaFunction.Arn
       FILE_CHANGED_WATCHER_NAME: !Ref FileChangedWatcherLambdaFunction
   processImagesHTTP:
-    handler: src/images.processHTTP
+    handler: src/handlers/images.processHTTP
     timeout: 29
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
@@ -180,7 +190,7 @@ functions:
           authorizer:
             name: serviceAuthorizer
   checkProcess:
-    handler: src/images.checkProcess
+    handler: src/handlers/images.checkProcess
     timeout: 29
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
@@ -191,11 +201,11 @@ functions:
           authorizer:
             name: serviceAuthorizer
   fileChangedWatcher:
-    handler: src/changes.watch
+    handler: src/handlers/changes.watch
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
   fileChangedNotification:
-    handler: src/changes.notify
+    handler: src/handlers/changes.notify
     layers:
       - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
     events:

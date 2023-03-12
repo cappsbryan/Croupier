@@ -15,11 +15,16 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 
-import { driveClient } from "./driveClient";
-import { dynamoDbClient } from "./dynamoDbClient";
-import type { Image } from "./models/Image";
-import type { Project } from "./models/Project";
-import { badRequest, internalServerError, notFound, ok } from "./responses";
+import { driveClient } from "../shared/driveClient";
+import { dynamoDbClient } from "../shared/dynamoDbClient";
+import type { Image } from "../models/Image";
+import type { Project } from "../models/Project";
+import {
+  badRequest,
+  internalServerError,
+  notFound,
+  ok,
+} from "../shared/responses";
 
 export async function checkProcess(
   event: APIGatewayProxyEventV2WithJWTAuthorizer

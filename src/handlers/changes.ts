@@ -7,10 +7,10 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 
-import { driveClient } from "./driveClient";
-import { internalServerError, ok } from "./responses";
-import type { Project } from "./models/Project";
-import { dynamoDbClient } from "./dynamoDbClient";
+import { driveClient } from "../shared/driveClient";
+import { internalServerError, ok } from "../shared/responses";
+import type { Project } from "../models/Project";
+import { dynamoDbClient } from "../shared/dynamoDbClient";
 
 const randomBytesAsync = promisify(randomBytes);
 

@@ -14,9 +14,14 @@ import {
   GetPolicyCommand,
 } from "@aws-sdk/client-lambda";
 
-import { Convert, SetScheduleRequest } from "./dtos/SetScheduleRequest";
-import { dynamoDbClient } from "./dynamoDbClient";
-import { badRequest, internalServerError, notFound, ok } from "./responses";
+import { Convert, SetScheduleRequest } from "../dtos/SetScheduleRequest";
+import { dynamoDbClient } from "../shared/dynamoDbClient";
+import {
+  badRequest,
+  internalServerError,
+  notFound,
+  ok,
+} from "../shared/responses";
 
 export async function get(
   event: APIGatewayProxyEventV2WithJWTAuthorizer

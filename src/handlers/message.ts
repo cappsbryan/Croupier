@@ -6,13 +6,13 @@ import type {
 import { Readable } from "stream";
 import type { ReadableStream } from "stream/web";
 
-import { driveClient } from "./driveClient";
-import { Convert, GroupMeCallback } from "./dtos/GroupMeCallback";
-import { dynamoDbClient } from "./dynamoDbClient";
-import type { Image } from "./models/Image";
-import type { Project } from "./models/Project";
-import { badRequest, internalServerError, ok } from "./responses";
-import { groupmeAccessToken } from "./secrets";
+import { driveClient } from "../shared/driveClient";
+import { Convert, GroupMeCallback } from "../dtos/GroupMeCallback";
+import { dynamoDbClient } from "../shared/dynamoDbClient";
+import type { Image } from "../models/Image";
+import type { Project } from "../models/Project";
+import { badRequest, internalServerError, ok } from "../shared/responses";
+import { uploadImage } from "../shared/images";
 
 export async function dailyMessage(event: { groupId: string }) {
   const project = await getProject(event.groupId);
@@ -34,9 +34,13 @@ export async function dailyMessage(event: { groupId: string }) {
   let uri = image.uri;
   if (!uri) {
     const imageData = await downloadImage(image.fileId);
-    uri = await uploadImage(image.fileId, imageData.stream, imageData.mimeType);
+    console.log(`Uploading file ${image.fileId}...`);
+    try {
+      uri = await uploadImage(imageData.stream, imageData.mimeType);
+    } catch {
+      return internalServerError("Failed to upload image");
+    }
   }
-  if (!uri) return internalServerError("Failed to upload image");
   console.info("groupme image url:", uri);
 
   await postImage(uri, project.botId, project.emojis);
@@ -86,6 +90,15 @@ export async function receiveMessage(
   console.info("received search:", search);
   const eligibleImages = await searchForImages(search, project);
   console.info("found %d eligible images", eligibleImages.length);
+
+  if (eligibleImages.length === 0) {
+    await postNotFoundMessage(project);
+    return ok({
+      groupId: groupMeCallback.group_id,
+      message: "Posted image not found message",
+    });
+  }
+
   const image = selectImage(eligibleImages);
   if (!image) {
     console.warn("not posting, no image found");
@@ -99,9 +112,13 @@ export async function receiveMessage(
   let uri = image.uri;
   if (!uri) {
     const imageData = await downloadImage(image.fileId);
-    uri = await uploadImage(image.fileId, imageData.stream, imageData.mimeType);
+    console.log(`Uploading file ${image.fileId}...`);
+    try {
+      uri = await uploadImage(imageData.stream, imageData.mimeType);
+    } catch {
+      return internalServerError("Failed to upload image");
+    }
   }
-  if (!uri) return internalServerError("Failed to upload image");
   console.info("groupme image url:", uri);
 
   await postImage(uri, project.botId, project.emojis);
@@ -120,7 +137,9 @@ const neededProjectKeys = [
   "keyword",
   "replacements",
   "emojis",
-] as const;
+  "notFoundMessage",
+  "notFoundLink",
+] satisfies (keyof Project)[];
 
 async function getProject(
   groupId: string
@@ -183,15 +202,35 @@ function filterBasedOnSearch(
   // no filter needed if there's no search
   if (!search) return;
 
-  const replacedWords = search.split(" ").map((word, index) => ({
+  // find each replacement key, but only matching whole words, then replace
+  const orderedReplacementKeys = Object.keys(replacements).sort(
+    (a, b) => b.length - a.length
+  );
+  for (const key of orderedReplacementKeys) {
+    const index = search.indexOf(key);
+    if (index === -1) continue;
+    if (
+      index + key.length !== search.length &&
+      search[index + key.length + 1] !== " "
+    )
+      continue;
+    search =
+      search.slice(0, index) +
+      replacements[key] +
+      search.slice(index + key.length);
+  }
+  const searchWords = search.split(" ");
+
+  const filter = searchWords.map((word, index) => ({
     placeholder: `:${index}`,
-    value: replacements[word] ?? word,
+    value: word,
   }));
-  const filterExpression = replacedWords
-    .map((word) => `contains(fname, ${word.placeholder})`)
+
+  const filterExpression = filter
+    .map((f) => `contains(fname, ${f.placeholder})`)
     .join(" AND ");
   const expressionAttributeValues = Object.fromEntries(
-    replacedWords.map((word) => [word.placeholder, word.value])
+    filter.map((f) => [f.placeholder, f.value])
   );
   return {
     filterExpression,
@@ -244,39 +283,6 @@ async function downloadImage(
   return { stream, mimeType };
 }
 
-async function uploadImage(
-  fileId: string,
-  stream: ReadableStream,
-  mimeType: string
-): Promise<string | undefined> {
-  console.log(`Uploading file ${fileId}...`);
-  const info: RequestInit & { duplex: "half" } = {
-    body: stream as any, // some sort of TypeScript bug? ReadableStream != ReadableStream
-    duplex: "half", // duplex is required if body is a stream, but TypeScript doesn't know it
-    method: "post",
-    headers: {
-      "X-Access-Token": await groupmeAccessToken(),
-      "Content-Type": mimeType,
-    },
-  };
-  const uploadResponse = await fetch(
-    "https://image.groupme.com/pictures",
-    info
-  );
-  const uploadResponseBody = (await uploadResponse.json()) as {
-    payload: { url: string | undefined } | undefined;
-  };
-  const imageUrl = uploadResponseBody?.payload?.url;
-  if (!imageUrl) {
-    console.warn("upload response:", uploadResponseBody);
-    console.warn("upload response headers:");
-    uploadResponse.headers.forEach((value, key) => {
-      console.warn(`${key}: ${value}`);
-    });
-  }
-  return imageUrl;
-}
-
 async function postImage(
   imageUri: string,
   groupMeBotId: string,
@@ -295,6 +301,27 @@ async function postImage(
         {
           type: "image",
           url: imageUri,
+        },
+      ],
+    }),
+  });
+}
+
+async function postNotFoundMessage(
+  project: Pick<Project, "botId" | "notFoundMessage" | "notFoundLink">
+) {
+  await fetch("https://api.groupme.com/v3/bots/post", {
+    method: "post",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      bot_id: project.botId,
+      text: project.notFoundMessage,
+      attachments: [
+        {
+          type: "image",
+          url: project.notFoundLink,
         },
       ],
     }),

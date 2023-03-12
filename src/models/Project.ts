@@ -4,6 +4,8 @@ export interface Project {
   folderId: string;
   folderChannelId?: string;
   folderChannelToken?: string;
+  notFoundMessage: string;
+  notFoundLink: string;
   botId: string;
   keyword: string;
   replacements: { [key: string]: string };

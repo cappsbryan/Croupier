@@ -12,6 +12,8 @@ export interface CreateProjectRequest {
   folderId: string;
   botId: string;
   keyword: string;
+  notFoundMessage: string;
+  notFoundLink: string;
   replacements: { [key: string]: string };
   emojis: string[];
 }
@@ -215,6 +217,8 @@ const typeMap: any = {
       { json: "folderId", js: "folderId", typ: "" },
       { json: "botId", js: "botId", typ: "" },
       { json: "keyword", js: "keyword", typ: "" },
+      { json: "notFoundMessage", js: "notFoundMessage", typ: "" },
+      { json: "notFoundLink", js: "notFoundLink", typ: "" },
       { json: "replacements", js: "replacements", typ: m("") },
       { json: "emojis", js: "emojis", typ: a("") },
     ],

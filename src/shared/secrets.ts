@@ -12,8 +12,11 @@ export function groupmeAccessToken(): Promise<string> {
 
 async function getParameter(name: string): Promise<string> {
   if (process.env["IS_OFFLINE"]) {
-    // Note: __dirname resolves to the .build/src folder
-    return await readFile(__dirname + "/../../offline_secrets/" + name, "utf8");
+    // Note: __dirname resolves to the .esbuild/.build/src/shared folder
+    return await readFile(
+      __dirname + "/../../../../offline_secrets/" + name,
+      "utf8"
+    );
   }
 
   const baseUrl =

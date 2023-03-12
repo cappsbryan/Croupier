@@ -4,11 +4,18 @@ import type {
 } from "aws-lambda";
 import { Lambda } from "@aws-sdk/client-lambda";
 
-import type { Image } from "./models/Image";
-import type { Project } from "./models/Project";
-import { badRequest, created, noContent, notFound, ok } from "./responses";
-import { Convert, CreateProjectRequest } from "./dtos/CreateProjectRequest";
-import { dynamoDbClient } from "./dynamoDbClient";
+import type { Image } from "../models/Image";
+import type { Project } from "../models/Project";
+import {
+  badRequest,
+  created,
+  noContent,
+  notFound,
+  ok,
+} from "../shared/responses";
+import { Convert, CreateProjectRequest } from "../dtos/CreateProjectRequest";
+import { dynamoDbClient } from "../shared/dynamoDbClient";
+import { uploadImage } from "../shared/images";
 
 function projectResponse(project: Record<string, any>) {
   const { fileId, subject, ...response } = project;
@@ -65,7 +72,7 @@ export async function create(
 
   let body: CreateProjectRequest;
   try {
-    body = convertBody(event.body);
+    body = await convertBody(event.body);
   } catch (e: unknown) {
     if (e instanceof Error) return badRequest(e.message);
     else throw e;
@@ -112,7 +119,7 @@ export async function updateOne(
 
   let body: CreateProjectRequest;
   try {
-    body = convertBody(event.body);
+    body = await convertBody(event.body);
   } catch (e: unknown) {
     if (e instanceof Error) return badRequest(e.message);
     else throw e;
@@ -194,11 +201,28 @@ export async function deleteOne(
   return noContent();
 }
 
-function convertBody(requestBody: any): CreateProjectRequest {
+async function convertBody(requestBody: any): Promise<CreateProjectRequest> {
   const body = Convert.toCreateProjectRequest(requestBody);
   body.keyword = body.keyword.toLowerCase();
   for (const [key, value] of Object.entries(body.replacements)) {
     body.replacements[key.toLowerCase()] = value.toLowerCase();
   }
+  const groupMeImageRegex = /^https\:\/\/i\.groupme\.com\/[\d]+x[\d]+\..+\..+$/;
+  if (!groupMeImageRegex.test(body.notFoundLink)) {
+    const converedNotFoundLink = await convertNotFoundLink(body.notFoundLink);
+    body.notFoundLink = converedNotFoundLink;
+  }
   return body;
+}
+
+async function convertNotFoundLink(link: string): Promise<string> {
+  console.log("Fetching not found image:", link);
+  const downloaded = await fetch(link);
+  const contentType = downloaded.headers.get("content-type");
+  console.log("Downloaded not found image with content type:", contentType);
+  if (!contentType || !downloaded.body)
+    throw new Error(
+      "Unable to process notFoundLink. Consider using GroupMe's image service."
+    );
+  return await uploadImage(downloaded.body, contentType);
 }
