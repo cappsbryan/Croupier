@@ -7,6 +7,7 @@ import {
   DescribeRuleCommand,
   PutRuleCommand,
   PutTargetsCommand,
+  DescribeRuleCommandOutput,
 } from "@aws-sdk/client-eventbridge";
 import {
   Lambda,
@@ -46,9 +47,13 @@ export async function get(
 
   const ruleName = userEventRuleNamePrefix + groupId;
   const eventBridge = new EventBridge({});
-  const rule = await eventBridge.send(
-    new DescribeRuleCommand({ Name: ruleName })
-  );
+
+  let rule: DescribeRuleCommandOutput | undefined;
+  try {
+    rule = await eventBridge.send(new DescribeRuleCommand({ Name: ruleName }));
+  } catch {
+    rule = undefined;
+  }
 
   if (rule) {
     const schedule = rule.ScheduleExpression;
@@ -119,16 +124,24 @@ export async function set(
   );
 
   const lambda = new Lambda({});
-  const policyResponse = await lambda.send(
-    new GetPolicyCommand({
-      FunctionName: dailyMessageFunctionName,
-    })
-  );
-  const policy: { Statement: [{ Sid: string }] } = policyResponse.Policy
-    ? JSON.parse(policyResponse.Policy)
-    : undefined;
+  let hasPolicyStatement: boolean;
+  try {
+    const policyResponse = await lambda.send(
+      new GetPolicyCommand({
+        FunctionName: dailyMessageFunctionName,
+      })
+    );
+    const policy: { Statement: [{ Sid: string }] } = policyResponse.Policy
+      ? JSON.parse(policyResponse.Policy)
+      : undefined;
+    hasPolicyStatement = policy.Statement.some(
+      (statement) => statement.Sid === statementId
+    );
+  } catch {
+    hasPolicyStatement = false;
+  }
 
-  if (!policy.Statement.find((statement) => statement.Sid === statementId)) {
+  if (!hasPolicyStatement) {
     await lambda.send(
       new AddPermissionCommand({
         FunctionName: dailyMessageFunctionName,
