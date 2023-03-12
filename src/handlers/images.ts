@@ -75,7 +75,10 @@ export async function processHTTP(
 export async function process(event: {
   groupId: string | undefined;
 }): Promise<APIGatewayProxyStructuredResultV2> {
-  if (!event.groupId) return badRequest("Missing id in path");
+  if (!event.groupId) {
+    console.error("Missing id in path");
+    return badRequest();
+  }
   const groupId = event.groupId;
 
   const dbResult = await projectAndImages(groupId);
@@ -88,10 +91,14 @@ export async function process(event: {
     driveQuery(driveClient(), dbResult.project.folderId),
     dbResult.images,
   ]);
-  if (!driveFiles)
-    return internalServerError("Failed to retrieve files from Google Drive");
-  if (!dbImages)
-    return internalServerError("Failed to retrieve image data from db");
+  if (!driveFiles) {
+    console.error("Failed to retrieve files from Google Drive");
+    return internalServerError();
+  }
+  if (!dbImages) {
+    console.error("Failed to retrieve image data from db");
+    return internalServerError();
+  }
 
   const dbImagesMap: Record<string, QueryImageResult | undefined> =
     Object.fromEntries(dbImages.map((image) => [image.fileId, image]));
@@ -100,14 +107,8 @@ export async function process(event: {
   const extraImages = dbImages.filter((image) => !driveFilesMap[image.fileId]);
 
   const newImages = driveFiles.filter((file) => !dbImagesMap[file.id]);
-  console.log(
-    "Deleting images:",
-    extraImages.map((i) => i.fileId)
-  );
-  console.log(
-    "Adding images:",
-    newImages.map((i) => i.id)
-  );
+  console.log("Deleting", extraImages.length, "images");
+  console.log("Adding", newImages.length, "images");
 
   const dynamoDb = dynamoDbClient();
   await dynamoDb.batchWrite({

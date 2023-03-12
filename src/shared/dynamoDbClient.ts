@@ -83,20 +83,13 @@ export class ProjectTableClient {
   ): Promise<(BatchWriteCommandOutput | undefined)[]> {
     const { RequestItems, ...otherParams } = params;
 
-    let calls: Promise<BatchWriteCommandOutput | undefined>[] = [];
-    const maxConcurrency = 4;
-    for (let i = 0; i < maxConcurrency; i++) {
-      const chunkedItems = chunked(RequestItems);
-      const concurrentCalls: typeof calls = [];
-      for (const chunk of chunkedItems) {
-        const batchWriteCall = this.retryingBatchWrite({
-          RequestItems: chunk,
-          ...otherParams,
-        });
-        concurrentCalls.push(batchWriteCall);
-      }
-      calls.concat(concurrentCalls);
-    }
+    const chunkedItems = chunked(RequestItems);
+    const calls = chunkedItems.map((chunk) =>
+      this.retryingBatchWrite({
+        RequestItems: chunk,
+        ...otherParams,
+      })
+    );
 
     return await Promise.all(calls);
   }

@@ -91,7 +91,8 @@ export async function create(
     await dynamoDb.put(putParams);
   } catch (e: unknown) {
     if (e instanceof Error && e.name === "ConditionalCheckFailedException") {
-      return badRequest("A project with that groupId already exists");
+      console.error("A project with that groupId already exists");
+      return badRequest();
     } else {
       throw e;
     }
@@ -99,10 +100,15 @@ export async function create(
 
   const lambda = new Lambda({});
   await lambda.invoke({
-    FunctionName: process.env["PROCESS_IMAGES_FUNCTION_NAME"] as string,
+    FunctionName: process.env["PROCESS_IMAGES_FUNCTION_NAME"],
     InvocationType: "Event",
     Payload: Buffer.from(JSON.stringify({ groupId: body.groupId })),
   });
+  console.info(
+    "Invoked",
+    process.env["PROCESS_IMAGES_FUNCTION_NAME"],
+    body.groupId
+  );
 
   return created(body, "/projects/" + body.groupId);
 }
