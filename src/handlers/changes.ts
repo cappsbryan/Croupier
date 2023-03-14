@@ -28,6 +28,7 @@ export async function watch(
   );
   const tokenBuffer = await randomBytesAsync(64);
   const token = tokenBuffer.toString("base64url");
+  const fullToken = "token=" + token;
   const response = await drive.files.watch({
     fileId: project.folderId,
     requestBody: {
@@ -35,7 +36,7 @@ export async function watch(
       type: "web_hook",
       address: `${baseUrl}/projects/${project.groupId}/notify`,
       expiration: "" + (Date.now() + 86_400_000),
-      token: "token=" + token,
+      token: fullToken,
     },
   });
 
@@ -48,7 +49,7 @@ export async function watch(
     UpdateExpression: "SET folderChannelId=:f, folderChannelToken=:t",
     ExpressionAttributeValues: {
       ":f": folderChannelId,
-      ":t": token,
+      ":t": fullToken,
     },
   });
 
@@ -58,11 +59,16 @@ export async function watch(
 export async function notify(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
 ): Promise<APIGatewayProxyStructuredResultV2> {
-  if (!process.env["PROCESS_IMAGES_FUNCTION_NAME"])
-    return internalServerError();
-  if (!event.pathParameters?.["groupId"]) return internalServerError();
   const processImagesFunctionName = process.env["PROCESS_IMAGES_FUNCTION_NAME"];
-  const groupId = event.pathParameters["groupId"];
+  if (!processImagesFunctionName) {
+    console.error("Missing PROCESS_IMAGES_FUNCTION_NAME");
+    return internalServerError();
+  }
+  const groupId = event.pathParameters?.["groupId"];
+  if (!groupId) {
+    console.error("Missing groupId from path");
+    return internalServerError();
+  }
 
   const dynamoDb = dynamoDbClient();
   const projectResponse = await dynamoDb.get({
@@ -73,21 +79,39 @@ export async function notify(
   });
   const project = projectResponse.Item as Project | undefined;
 
-  if (event.headers["x-goog-channel-id"] !== project?.folderChannelId)
-    return ok("Ignoring because channel id doesn't match");
-  if (event.headers["x-goog-resource-state"] === "sync")
-    return ok("Ignoring because this is a sync call");
-  if (event.headers["x-goog-channel-token"] !== project?.folderChannelToken)
-    return ok("Ignoring because the token doesn't match");
+  console.info("Checking headers");
+  if (event.headers["x-goog-channel-id"] !== project?.folderChannelId) {
+    console.info(
+      "Ignoring because channel id doesn't match:",
+      event.headers["x-goog-channel-id"],
+      project?.folderChannelId
+    );
+    return ok("");
+  }
+  if (event.headers["x-goog-resource-state"] === "sync") {
+    console.info("Ignoring because this is a sync call");
+    return ok("");
+  }
+  if (event.headers["x-goog-channel-token"] !== project?.folderChannelToken) {
+    console.info(
+      "Ignoring because the token doesn't match",
+      event.headers["x-goog-channel-token"],
+      project?.folderChannelToken
+    );
+    return ok("");
+  }
+  console.info("Everything matches, invoking processImages");
 
   const lambda = new LambdaClient({});
+  const payload = { groupId: groupId };
   await lambda.send(
     new InvokeCommand({
       FunctionName: processImagesFunctionName,
       InvocationType: "Event",
-      Payload: Buffer.from(JSON.stringify({ groupId: groupId })),
+      Payload: Buffer.from(JSON.stringify(payload)),
     })
   );
+  console.info("Invoked", processImagesFunctionName, payload);
 
   return ok(event.body);
 }
