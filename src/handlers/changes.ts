@@ -81,7 +81,7 @@ export async function notify(
     return ok("Ignoring because the token doesn't match");
 
   const lambda = new LambdaClient({});
-  lambda.send(
+  await lambda.send(
     new InvokeCommand({
       FunctionName: processImagesFunctionName,
       InvocationType: "Event",

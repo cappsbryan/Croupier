@@ -32,7 +32,9 @@ export class ProjectTableClient {
 
   constructor(tableName: string) {
     this.tableName = tableName;
-    const client = new DynamoDBClient({});
+    const client = new DynamoDBClient({
+      maxAttempts: 10,
+    });
     this.documentClient = DynamoDBDocumentClient.from(client, {
       marshallOptions: { removeUndefinedValues: true },
     });
