@@ -25,6 +25,11 @@ import {
   notFound,
   ok,
 } from "../shared/responses";
+import {
+  driveFilesFields,
+  isValidDriveImage,
+  ValidDriveImage,
+} from "../shared/images";
 
 export async function checkProcess(
   event: APIGatewayProxyEventV2WithJWTAuthorizer
@@ -105,6 +110,8 @@ export async function process(event: {
   const driveFilesMap: Record<string, ValidDriveImage | undefined> =
     Object.fromEntries(driveFiles.map((file) => [file.id, file]));
   const extraImages = dbImages.filter((image) => !driveFilesMap[image.fileId]);
+  console.log(dbImages.length, "images in database");
+  console.log(driveFiles.length, "images in drive folder");
 
   const newImages = driveFiles.filter((file) => !dbImagesMap[file.id]);
   console.log("Deleting", extraImages.length, "images");
@@ -142,18 +149,6 @@ export async function process(event: {
   });
 
   return ok({ message: `Processed ${driveFiles.length} images` });
-}
-
-const driveFilesFields = ["id", "mimeType", "name", "version"] as const;
-type ValidDriveImage = {
-  [key in keyof drive_v3.Schema$File &
-    typeof driveFilesFields[number]]: NonNullable<drive_v3.Schema$File[key]>;
-};
-
-function isValidDriveImage(
-  file: drive_v3.Schema$File
-): file is ValidDriveImage {
-  return !!file.id && !!file.mimeType && !!file.name && !!file.version;
 }
 
 async function driveQuery(
@@ -261,7 +256,7 @@ async function setupRecurringFolderWatch(project: QueryProjectResult) {
   const rule = await eventBridge.send(
     new PutRuleCommand({
       Name: ruleName,
-      ScheduleExpression: `rate(23 hours)`,
+      ScheduleExpression: `rate(167 hours)`, // a week minus an hour
     })
   );
   await eventBridge.send(

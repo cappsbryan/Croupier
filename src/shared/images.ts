@@ -1,3 +1,4 @@
+import type { drive_v3 } from "@googleapis/drive";
 import { groupmeAccessToken } from "./secrets";
 
 export async function uploadImage(
@@ -26,4 +27,19 @@ export async function uploadImage(
     throw new Error("Failed to upload image to GroupMe image service");
   }
   return imageUrl;
+}
+
+export const driveFilesFields = ["id", "mimeType", "name", "version"] as const;
+export type ValidDriveImage = {
+  [key in keyof drive_v3.Schema$File &
+    typeof driveFilesFields[number]]: NonNullable<drive_v3.Schema$File[key]>;
+};
+
+export function isValidDriveImage(
+  file: drive_v3.Schema$File
+): file is ValidDriveImage {
+  for (const field of driveFilesFields) {
+    if (file[field] === undefined || file[field] === null) return false;
+  }
+  return true;
 }

@@ -11,4 +11,5 @@ export interface Project {
   replacements: { [key: string]: string };
   emojis: string[];
   subject: string;
+  nextStartPageToken?: string;
 }

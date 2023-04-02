@@ -20,6 +20,7 @@ provider:
   environment:
     DYNAMODB_PROJECT_TABLE: ${self:service}-projectTable-${sls:stage}
     PROCESS_IMAGES_FUNCTION_NAME: ${self:service}-${sls:stage}-processImages
+    PROCESS_CHANGE_FUNCTION_NAME: ${self:service}-${sls:stage}-processChange
     USER_EVENT_RULE_NAME_PREFIX: ${self:service}-${sls:stage}-user-schedule-
     FILE_WATCHER_EVENT_RULE_NAME_PREFIX: ${self:service}-${sls:stage}-file-watcher-
     FILE_CHANGE_BASE_URL:
@@ -40,6 +41,7 @@ provider:
             - "dynamodb:Query"
             - "dynamodb:UpdateItem"
             - "dynamodb:BatchWriteItem"
+            - "dynamodb:DeleteItem"
           Resource:
             - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/${self:service}-projectTable-${sls:stage}
         - Effect: "Allow"
@@ -59,6 +61,7 @@ provider:
           Resource:
             - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-processImages
             - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-fileChangedWatcher
+            - arn:aws:lambda:${aws:region}:${aws:accountId}:function:${self:service}-${sls:stage}-processChange
         - Effect: "Allow"
           Action:
             - "events:DescribeRule"
@@ -212,6 +215,11 @@ functions:
       - httpApi:
           path: /projects/{groupId}/notify
           method: post
+  processChange:
+    handler: src/handlers/changes.process
+    timeout: 60
+    layers:
+      - arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:4
 
 resources:
   Resources:
