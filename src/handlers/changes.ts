@@ -47,7 +47,7 @@ export async function watch(
       id: folderChannelId,
       type: "web_hook",
       address: `${baseUrl}/projects/${project.groupId}/notify`,
-      expiration: "" + (Date.now() + 604_800_000), // a week from now
+      expiration: "" + (Date.now() + 604_800_000), // a week from now (168 hours)
       token: fullToken,
     },
   });
@@ -102,8 +102,10 @@ export async function notify(
     console.info(
       "Ignoring because channel id doesn't match:",
       event.headers["x-goog-channel-id"],
+      "!=",
       project.folderChannelId
     );
+    console.info("Expires:", event.headers["x-goog-channel-expiration"]);
     return ok("");
   }
   if (event.headers["x-goog-resource-state"] === "sync") {
