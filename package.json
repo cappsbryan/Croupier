@@ -10,7 +10,6 @@
     "@aws-sdk/types": "^3.272.0",
     "@tsconfig/node18-strictest-esm": "^1.0.1",
     "@types/aws-lambda": "^8.10.111",
-    "aws-lambda": "^1.0.7",
     "esbuild": "^0.16.17",
     "serverless": "^3.26.0",
     "serverless-esbuild": "^1.39.0",
