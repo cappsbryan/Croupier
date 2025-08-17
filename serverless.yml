@@ -1,12 +1,12 @@
+org: cappsbryan
+app: croupier
 service: croupier
-frameworkVersion: "3"
 
 package:
   individually: true
 
 # plugin order matters
 plugins:
-  - serverless-esbuild
   - serverless-offline
 
 custom:
@@ -15,7 +15,7 @@ custom:
 
 provider:
   name: aws
-  runtime: nodejs18.x
+  runtime: nodejs22.x
   architecture: arm64
   environment:
     DYNAMODB_PROJECT_TABLE: ${self:service}-projectTable-${sls:stage}
