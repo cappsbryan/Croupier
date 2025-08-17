@@ -1,0 +1,27 @@
+name: Deploy dev branch
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    name: deploy dev
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22.x]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+    - run: npm ci
+    - name: serverless deploy
+      uses: serverless/github-action@v4.0.0
+      with:
+        args: deploy --stage dev
+      env:
+        SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
